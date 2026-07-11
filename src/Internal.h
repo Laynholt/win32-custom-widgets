@@ -18,5 +18,7 @@ StyleOverride WindowStyleOverride(HWND window);
 
 // Handles messages shared by every fully buffer-painted library control.
 bool HandleControlMessage(HWND window, UINT message, LRESULT& result);
+bool RegisterButtonClasses();
+bool RegisterDisplayClasses();
 
 } // namespace wcw::internal

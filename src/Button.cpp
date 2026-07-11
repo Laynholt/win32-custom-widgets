@@ -1,0 +1,216 @@
+#include <wcw/Controls.h>
+#include <wcw/Runtime.h>
+
+#include "Internal.h"
+#include "Paint.h"
+
+#include <algorithm>
+#include <memory>
+#include <windowsx.h>
+
+namespace wcw {
+namespace {
+
+constexpr wchar_t ButtonClass[] = L"WcwButton";
+
+struct ButtonState {
+    HICON icon{};
+    HBITMAP bitmap{};
+    float iconSizeDip{};
+    UINT alignment{};
+    bool isDefault{};
+    bool isCancel{};
+    bool hover{};
+    bool pressed{};
+    bool keyboardPressed{};
+};
+
+bool Inside(HWND window, LPARAM position) {
+    RECT bounds{};
+    GetClientRect(window, &bounds);
+    return PtInRect(&bounds, {GET_X_LPARAM(position), GET_Y_LPARAM(position)});
+}
+
+void NotifyClicked(HWND window) {
+    if (!IsWindowEnabled(window)) return;
+    SendMessageW(GetParent(window), WM_COMMAND,
+                 MAKEWPARAM(GetDlgCtrlID(window), BN_CLICKED), reinterpret_cast<LPARAM>(window));
+}
+
+void PaintButton(HWND window, ButtonState& state) {
+    PAINTSTRUCT ps{};
+    const auto target = BeginPaint(window, &ps);
+    RECT bounds{};
+    GetClientRect(window, &bounds);
+    paint::Buffer buffer(target, bounds);
+    if (buffer) {
+        const auto dpi = paint::Dpi(window);
+        const auto style = ResolveStyle(GetTheme(), internal::WindowStyleOverride(window));
+        const auto width = static_cast<float>(bounds.right - bounds.left);
+        const auto height = static_cast<float>(bounds.bottom - bounds.top);
+        const Gdiplus::RectF shape{0, 0, width, height};
+        const auto radius = paint::ToPixels(style.cornerRadiusDip, dpi);
+        const auto enabled = IsWindowEnabled(window) != FALSE;
+        const auto background = !enabled ? style.disabledSurface
+                              : state.pressed ? style.pressed
+                              : state.hover   ? style.hover
+                                              : style.background;
+        Gdiplus::Graphics graphics(buffer.dc());
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        paint::Fill(graphics, shape, radius, background);
+        paint::Border(graphics, shape, radius, style.border,
+                      paint::ToPixels(style.borderWidthDip, dpi));
+
+        RECT content = bounds;
+        const int padding = static_cast<int>(paint::ToPixels(style.paddingXDip, dpi));
+        InflateRect(&content, -padding, 0);
+        const int iconSize = static_cast<int>(paint::ToPixels(state.iconSizeDip, dpi));
+        const bool hasImage = state.icon || state.bitmap;
+        const int gap = hasImage && GetWindowTextLengthW(window) ?
+                            static_cast<int>(paint::ToPixels(style.spacingDip, dpi)) : 0;
+        int imageLeft = content.left;
+        if (state.alignment & DT_CENTER)
+            imageLeft = (bounds.right - iconSize - gap -
+                         (GetWindowTextLengthW(window) ? bounds.right / 3 : 0)) / 2;
+        else if (state.alignment & DT_RIGHT)
+            imageLeft = content.right - iconSize;
+        const RECT imageBounds{imageLeft, (bounds.bottom - iconSize) / 2,
+                               imageLeft + iconSize, (bounds.bottom + iconSize) / 2};
+        if (state.icon) paint::Icon(buffer.dc(), state.icon, imageBounds);
+        if (state.bitmap) paint::Bitmap(buffer.dc(), state.bitmap, imageBounds);
+
+        wchar_t text[512]{};
+        const int length = GetWindowTextW(window, text, 512);
+        if (length) {
+            RECT textBounds = content;
+            if (hasImage) textBounds.left = imageBounds.right + gap;
+            paint::Text(buffer.dc(), std::wstring_view(text, length), textBounds,
+                        paint::Font(style.font, dpi), enabled ? style.text : style.disabledText,
+                        state.alignment | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        if (GetFocus() == window)
+            paint::Focus(graphics, shape, radius, style.focus,
+                         paint::ToPixels(style.focusWidthDip, dpi));
+    }
+    EndPaint(window, &ps);
+}
+
+LRESULT CALLBACK ButtonProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    auto state = reinterpret_cast<ButtonState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE) {
+        const auto options = static_cast<const ButtonOptions*>(
+            reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        auto created = std::make_unique<ButtonState>(ButtonState{
+            options->icon, options->bitmap, options->iconSizeDip, options->alignment,
+            options->isDefault, options->isCancel});
+        state = created.release();
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+        internal::RegisterWindow(window);
+    }
+
+    LRESULT shared{};
+    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    switch (message) {
+    case WM_NCDESTROY:
+        delete state;
+        SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        return DefWindowProcW(window, message, wParam, lParam);
+    case WM_GETDLGCODE:
+        return state && state->isDefault ? DLGC_DEFPUSHBUTTON : DLGC_UNDEFPUSHBUTTON;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_ENABLE:
+        if (state && message == WM_ENABLE && !wParam) state->pressed = state->keyboardPressed = false;
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    case WM_MOUSEMOVE:
+        if (state && !state->hover) {
+            state->hover = true;
+            TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window};
+            TrackMouseEvent(&tracking);
+            InvalidateRect(window, nullptr, FALSE);
+        }
+        return 0;
+    case WM_MOUSELEAVE:
+        if (state) state->hover = false;
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONDOWN:
+        if (state && IsWindowEnabled(window)) {
+            SetFocus(window);
+            SetCapture(window);
+            state->pressed = true;
+            InvalidateRect(window, nullptr, FALSE);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (state && state->pressed) {
+            const bool activate = GetCapture() == window && Inside(window, lParam);
+            state->pressed = false;
+            if (GetCapture() == window) ReleaseCapture();
+            InvalidateRect(window, nullptr, FALSE);
+            if (activate) NotifyClicked(window);
+        }
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (state && state->pressed) {
+            state->pressed = false;
+            InvalidateRect(window, nullptr, FALSE);
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (state && IsWindowEnabled(window) && (wParam == VK_SPACE || wParam == VK_RETURN) &&
+            !state->keyboardPressed) {
+            state->keyboardPressed = state->pressed = true;
+            InvalidateRect(window, nullptr, FALSE);
+        }
+        return 0;
+    case WM_KEYUP:
+        if (state && (wParam == VK_SPACE || wParam == VK_RETURN) && state->keyboardPressed) {
+            state->keyboardPressed = state->pressed = false;
+            InvalidateRect(window, nullptr, FALSE);
+            NotifyClicked(window);
+        }
+        return 0;
+    case WM_PAINT:
+        if (state) PaintButton(window, *state);
+        return 0;
+    default:
+        return DefWindowProcW(window, message, wParam, lParam);
+    }
+}
+
+HWND Create(const wchar_t* className, const ButtonOptions& options) {
+    if (!options.parent || !IsWindow(options.parent)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return nullptr;
+    }
+    const auto dpi = paint::Dpi(options.parent);
+    const auto bounds = paint::ToPixels(options.bounds, dpi);
+    const auto window = CreateWindowExW(
+        0, className, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
+        static_cast<int>(bounds.X), static_cast<int>(bounds.Y), static_cast<int>(bounds.Width),
+        static_cast<int>(bounds.Height), options.parent,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
+        const_cast<ButtonOptions*>(&options));
+    if (window && !options.appearance.background.has_value() && options.isDefault) {
+        auto appearance = options.appearance;
+        appearance.background = GetTheme().palette.accent;
+        SetStyleOverride(window, appearance);
+    } else if (window) {
+        SetStyleOverride(window, options.appearance);
+    }
+    return window;
+}
+
+} // namespace
+
+HWND CreateButton(const ButtonOptions& options) { return Create(ButtonClass, options); }
+HWND CreateIconButton(const ButtonOptions& options) { return Create(ButtonClass, options); }
+
+namespace internal {
+bool RegisterButtonClasses() {
+    return RegisterControlClass(ButtonClass, ButtonProc);
+}
+} // namespace internal
+} // namespace wcw

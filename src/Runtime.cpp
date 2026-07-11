@@ -61,6 +61,12 @@ bool Initialize(HINSTANCE instance) {
         return false;
     }
     state.instance = instance;
+    if (!internal::RegisterButtonClasses() || !internal::RegisterDisplayClasses()) {
+        Gdiplus::GdiplusShutdown(state.gdiplusToken);
+        state.gdiplusToken = 0;
+        state.instance = nullptr;
+        return false;
+    }
     return true;
 }
 
