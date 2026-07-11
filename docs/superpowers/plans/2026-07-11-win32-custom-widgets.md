@@ -27,7 +27,7 @@
 
 **Files:**
 - Create: `CMakeLists.txt`
-- Create: `.gitignore`
+- Modify: `.gitignore`
 - Create: `include/wcw/Theme.h`
 - Create: `src/Theme.cpp`
 - Create: `tests/Test.h`
@@ -39,7 +39,7 @@
 
 - [ ] **Step 1: Write the failing preset test and build graph**
 
-Create a CMake project that defines the library, alias, test executable, CTest entry, and links `user32`, `gdi32`, `gdiplus`, `comctl32`, and `oleacc`. In `tests/test_theme.cpp`, assert exact preset values:
+Extend the existing worktree/build ignore rules as needed, then create a CMake project that defines the library, alias, test executable, CTest entry, and links `user32`, `gdi32`, `gdiplus`, `comctl32`, and `oleacc`. In `tests/test_theme.cpp`, assert exact preset values:
 
 ```cpp
 #include "Test.h"
@@ -507,13 +507,13 @@ git commit -m "docs: add widget gallery and usage guide"
 - Consumes: public headers and namespaced target only.
 - Produces: proof that an external subdirectory consumer can build without private includes.
 
-- [ ] **Step 1: Write the consumer before wiring it into tests**
+- [ ] **Step 1: Write and configure the standalone consumer**
 
 The consumer includes only `<wcw/Runtime.h>`, `<wcw/Theme.h>`, and `<wcw/Controls.h>`, initializes the runtime, creates a hidden Button, destroys it, and shuts down. Configure it as a separate CMake tree pointing at the repository through `add_subdirectory`.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Verify the standalone boundary**
 
-Configure the consumer before adding any missing public include propagation. Expected: configuration or compilation fails if the library leaks private include assumptions.
+Configure and build the consumer. If it fails, preserve the exact failure as regression evidence and fix only the target metadata responsible. If it already passes, make no production change: this task is an integration verification, not a new production behavior that needs an artificial RED failure.
 
 - [ ] **Step 3: Fix only public target metadata and register the smoke test**
 
@@ -542,4 +542,3 @@ Launch the Release demo and verify: Dark/Light, radius 0 and 24, 100% and 150% D
 git add CMakeLists.txt tests/consumer
 git commit -m "test: verify external widget consumers"
 ```
-
