@@ -59,6 +59,13 @@ Gdiplus::Color GdiPlusColor(Color color) {
     return {color.a, color.r, color.g, color.b};
 }
 
+void Clear(HDC dc, const RECT& bounds, Color color) {
+    const auto brush = CreateSolidBrush(RGB(color.r, color.g, color.b));
+    if (!brush) return;
+    FillRect(dc, &bounds, brush);
+    DeleteObject(brush);
+}
+
 std::unique_ptr<Gdiplus::GraphicsPath> RoundedPath(const Gdiplus::RectF& bounds, float radius) {
     auto path = std::make_unique<Gdiplus::GraphicsPath>();
     radius = std::clamp(radius, 0.0f, (std::min)(bounds.Width, bounds.Height) / 2.0f);

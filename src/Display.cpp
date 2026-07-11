@@ -1,4 +1,5 @@
 #include <wcw/Controls.h>
+#include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
@@ -6,6 +7,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <new>
 
 namespace wcw {
 namespace {
@@ -72,6 +74,7 @@ void PaintDisplay(HWND window, const DisplayState& state) {
         const auto radius = paint::ToPixels(style.cornerRadiusDip, dpi);
         Gdiplus::Graphics graphics(buffer.dc());
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        paint::Clear(buffer.dc(), bounds, theme.palette.window);
 
         const auto background = state.kind == DisplayKind::Panel
                                     ? local.background.value_or(theme.palette.panel)
@@ -85,11 +88,11 @@ void PaintDisplay(HWND window, const DisplayState& state) {
             wchar_t text[1024]{};
             const int length = GetWindowTextW(window, text, 1024);
             paint::Text(buffer.dc(), std::wstring_view(text, length), bounds,
-                        paint::Font(theme.label, dpi),
+                        paint::Font(internal::ResolveLabelFont(theme, local), dpi),
                         IsWindowEnabled(window) ? style.text : style.disabledText,
                         DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
         } else if (state.kind == DisplayKind::Image && state.source.handle) {
-            const int diameter = static_cast<int>(radius * 2);
+            const int diameter = DipToPx(style.cornerRadiusDip * 2, dpi);
             const auto clip = radius > 0
                                   ? CreateRoundRectRgn(bounds.left, bounds.top, bounds.right + 1,
                                                        bounds.bottom + 1, diameter, diameter)
@@ -124,14 +127,15 @@ void PaintDisplay(HWND window, const DisplayState& state) {
     EndPaint(window, &ps);
 }
 
-LRESULT CALLBACK DisplayProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+LRESULT DisplayProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     auto state = reinterpret_cast<DisplayState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCCREATE) {
         const auto supplied = static_cast<const DisplayState*>(
             reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
-        state = new DisplayState(*supplied);
-        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+        auto created = std::make_unique<DisplayState>(*supplied);
         internal::RegisterWindow(window);
+        state = created.release();
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
     }
     LRESULT shared{};
     if (internal::HandleControlMessage(window, message, shared)) return shared;
@@ -140,6 +144,9 @@ LRESULT CALLBACK DisplayProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
         return HTTRANSPARENT;
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+    case WM_SETFOCUS:
+        SetFocus(GetParent(window));
+        return 0;
     case WM_PAINT:
         if (state) PaintDisplay(window, *state);
         return 0;
@@ -152,17 +159,27 @@ LRESULT CALLBACK DisplayProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     }
 }
 
+LRESULT CALLBACK DisplayProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    try {
+        return DisplayProcImpl(window, message, wParam, lParam);
+    } catch (const std::bad_alloc&) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    } catch (...) {
+        SetLastError(ERROR_GEN_FAILURE);
+    }
+    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
+}
+
 HWND Create(const wchar_t* className, const ControlOptions& options, DisplayState state) {
     if (!options.parent || !IsWindow(options.parent)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return nullptr;
     }
     const auto dpi = paint::Dpi(options.parent);
-    const auto bounds = paint::ToPixels(options.bounds, dpi);
     const auto window = CreateWindowExW(
         0, className, options.text.c_str(), WS_CHILD | (options.style & ~WS_TABSTOP),
-        static_cast<int>(bounds.X), static_cast<int>(bounds.Y), static_cast<int>(bounds.Width),
-        static_cast<int>(bounds.Height), options.parent,
+        DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
+        DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(), &state);
     if (window) SetStyleOverride(window, options.appearance);
     return window;
@@ -188,6 +205,10 @@ HWND CreatePanel(const ControlOptions& options) {
 }
 
 namespace internal {
+FontSpec ResolveLabelFont(const Theme& theme, const StyleOverride& local) {
+    return local.font.value_or(theme.label);
+}
+
 bool RegisterDisplayClasses() {
     return RegisterControlClass(LabelClass, DisplayProc) &&
            RegisterControlClass(ImageClass, DisplayProc) &&

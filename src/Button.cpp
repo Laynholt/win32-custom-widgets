@@ -1,4 +1,5 @@
 #include <wcw/Controls.h>
+#include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
@@ -6,6 +7,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <new>
 #include <windowsx.h>
 
 namespace wcw {
@@ -21,7 +23,7 @@ struct ButtonState {
     bool isDefault{};
     bool isCancel{};
     bool hover{};
-    bool pressed{};
+    bool mousePressed{};
     bool keyboardPressed{};
 };
 
@@ -37,6 +39,13 @@ void NotifyClicked(HWND window) {
                  MAKEWPARAM(GetDlgCtrlID(window), BN_CLICKED), reinterpret_cast<LPARAM>(window));
 }
 
+void CancelPress(HWND window, ButtonState& state) {
+    const bool changed = state.mousePressed || state.keyboardPressed;
+    state.mousePressed = state.keyboardPressed = false;
+    if (GetCapture() == window) ReleaseCapture();
+    if (changed) InvalidateRect(window, nullptr, FALSE);
+}
+
 void PaintButton(HWND window, ButtonState& state) {
     PAINTSTRUCT ps{};
     const auto target = BeginPaint(window, &ps);
@@ -45,16 +54,18 @@ void PaintButton(HWND window, ButtonState& state) {
     paint::Buffer buffer(target, bounds);
     if (buffer) {
         const auto dpi = paint::Dpi(window);
-        const auto style = ResolveStyle(GetTheme(), internal::WindowStyleOverride(window));
+        const auto theme = GetTheme();
+        const auto style = ResolveStyle(theme, internal::WindowStyleOverride(window));
         const auto width = static_cast<float>(bounds.right - bounds.left);
         const auto height = static_cast<float>(bounds.bottom - bounds.top);
         const Gdiplus::RectF shape{0, 0, width, height};
         const auto radius = paint::ToPixels(style.cornerRadiusDip, dpi);
         const auto enabled = IsWindowEnabled(window) != FALSE;
         const auto background = !enabled ? style.disabledSurface
-                              : state.pressed ? style.pressed
+                              : (state.mousePressed || state.keyboardPressed) ? style.pressed
                               : state.hover   ? style.hover
                                               : style.background;
+        paint::Clear(buffer.dc(), bounds, theme.palette.window);
         Gdiplus::Graphics graphics(buffer.dc());
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         paint::Fill(graphics, shape, radius, background);
@@ -62,12 +73,12 @@ void PaintButton(HWND window, ButtonState& state) {
                       paint::ToPixels(style.borderWidthDip, dpi));
 
         RECT content = bounds;
-        const int padding = static_cast<int>(paint::ToPixels(style.paddingXDip, dpi));
+        const int padding = DipToPx(style.paddingXDip, dpi);
         InflateRect(&content, -padding, 0);
-        const int iconSize = static_cast<int>(paint::ToPixels(state.iconSizeDip, dpi));
+        const int iconSize = DipToPx(state.iconSizeDip, dpi);
         const bool hasImage = state.icon || state.bitmap;
         const int gap = hasImage && GetWindowTextLengthW(window) ?
-                            static_cast<int>(paint::ToPixels(style.spacingDip, dpi)) : 0;
+                            DipToPx(style.spacingDip, dpi) : 0;
         int imageLeft = content.left;
         if (state.alignment & DT_CENTER)
             imageLeft = (bounds.right - iconSize - gap -
@@ -95,7 +106,7 @@ void PaintButton(HWND window, ButtonState& state) {
     EndPaint(window, &ps);
 }
 
-LRESULT CALLBACK ButtonProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     auto state = reinterpret_cast<ButtonState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCCREATE) {
         const auto options = static_cast<const ButtonOptions*>(
@@ -103,24 +114,32 @@ LRESULT CALLBACK ButtonProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         auto created = std::make_unique<ButtonState>(ButtonState{
             options->icon, options->bitmap, options->iconSizeDip, options->alignment,
             options->isDefault, options->isCancel});
+        internal::RegisterWindow(window);
         state = created.release();
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
-        internal::RegisterWindow(window);
     }
 
     LRESULT shared{};
     if (internal::HandleControlMessage(window, message, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
+        if (state) CancelPress(window, *state);
         delete state;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         return DefWindowProcW(window, message, wParam, lParam);
     case WM_GETDLGCODE:
-        return state && state->isDefault ? DLGC_DEFPUSHBUTTON : DLGC_UNDEFPUSHBUTTON;
+        return DLGC_BUTTON |
+               (state && state->isDefault ? DLGC_DEFPUSHBUTTON : DLGC_UNDEFPUSHBUTTON);
     case WM_SETFOCUS:
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
     case WM_KILLFOCUS:
+    case WM_CANCELMODE:
+        if (state) CancelPress(window, *state);
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
     case WM_ENABLE:
-        if (state && message == WM_ENABLE && !wParam) state->pressed = state->keyboardPressed = false;
+        if (state && !wParam) CancelPress(window, *state);
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     case WM_MOUSEMOVE:
@@ -139,35 +158,35 @@ LRESULT CALLBACK ButtonProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (state && IsWindowEnabled(window)) {
             SetFocus(window);
             SetCapture(window);
-            state->pressed = true;
+            state->mousePressed = true;
             InvalidateRect(window, nullptr, FALSE);
         }
         return 0;
     case WM_LBUTTONUP:
-        if (state && state->pressed) {
+        if (state && state->mousePressed) {
             const bool activate = GetCapture() == window && Inside(window, lParam);
-            state->pressed = false;
+            state->mousePressed = false;
             if (GetCapture() == window) ReleaseCapture();
             InvalidateRect(window, nullptr, FALSE);
             if (activate) NotifyClicked(window);
         }
         return 0;
     case WM_CAPTURECHANGED:
-        if (state && state->pressed) {
-            state->pressed = false;
-            InvalidateRect(window, nullptr, FALSE);
-        }
+        if (state) CancelPress(window, *state);
         return 0;
     case WM_KEYDOWN:
-        if (state && IsWindowEnabled(window) && (wParam == VK_SPACE || wParam == VK_RETURN) &&
+        if (state && IsWindowEnabled(window) &&
+            (wParam == VK_SPACE || wParam == VK_RETURN || (state->isCancel && wParam == VK_ESCAPE)) &&
             !state->keyboardPressed) {
-            state->keyboardPressed = state->pressed = true;
+            state->keyboardPressed = true;
             InvalidateRect(window, nullptr, FALSE);
         }
         return 0;
     case WM_KEYUP:
-        if (state && (wParam == VK_SPACE || wParam == VK_RETURN) && state->keyboardPressed) {
-            state->keyboardPressed = state->pressed = false;
+        if (state &&
+            (wParam == VK_SPACE || wParam == VK_RETURN || (state->isCancel && wParam == VK_ESCAPE)) &&
+            state->keyboardPressed) {
+            state->keyboardPressed = false;
             InvalidateRect(window, nullptr, FALSE);
             NotifyClicked(window);
         }
@@ -180,17 +199,27 @@ LRESULT CALLBACK ButtonProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     }
 }
 
+LRESULT CALLBACK ButtonProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    try {
+        return ButtonProcImpl(window, message, wParam, lParam);
+    } catch (const std::bad_alloc&) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    } catch (...) {
+        SetLastError(ERROR_GEN_FAILURE);
+    }
+    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
+}
+
 HWND Create(const wchar_t* className, const ButtonOptions& options) {
     if (!options.parent || !IsWindow(options.parent)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return nullptr;
     }
     const auto dpi = paint::Dpi(options.parent);
-    const auto bounds = paint::ToPixels(options.bounds, dpi);
     const auto window = CreateWindowExW(
         0, className, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
-        static_cast<int>(bounds.X), static_cast<int>(bounds.Y), static_cast<int>(bounds.Width),
-        static_cast<int>(bounds.Height), options.parent,
+        DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
+        DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
         const_cast<ButtonOptions*>(&options));
     if (window && !options.appearance.background.has_value() && options.isDefault) {

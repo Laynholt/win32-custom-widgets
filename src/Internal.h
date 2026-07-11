@@ -15,6 +15,7 @@ bool RegisterControlClass(const wchar_t* name, WNDPROC procedure,
 void RegisterWindow(HWND window);
 void UnregisterWindow(HWND window);
 StyleOverride WindowStyleOverride(HWND window);
+FontSpec ResolveLabelFont(const Theme& theme, const StyleOverride& local);
 
 // Handles messages shared by every fully buffer-painted library control.
 bool HandleControlMessage(HWND window, UINT message, LRESULT& result);

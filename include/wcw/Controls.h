@@ -24,7 +24,9 @@ struct ButtonOptions : ControlOptions {
     HBITMAP bitmap{};
     float iconSizeDip{16};
     UINT alignment{DT_CENTER};
+    // Reports DLGC_DEFPUSHBUTTON so a Win32 dialog manager can invoke this button on Enter.
     bool isDefault{};
+    // Lets the focused button perform its cancel action on Escape.
     bool isCancel{};
 };
 

@@ -34,6 +34,7 @@ unsigned Dpi(HWND window);
 float ToPixels(float dip, unsigned dpi);
 Gdiplus::RectF ToPixels(RectDip bounds, unsigned dpi);
 Gdiplus::Color GdiPlusColor(Color color);
+void Clear(HDC dc, const RECT& bounds, Color color);
 std::unique_ptr<Gdiplus::GraphicsPath> RoundedPath(const Gdiplus::RectF& bounds, float radius);
 void Fill(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float radius, Color color);
 void Border(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float radius, Color color,
