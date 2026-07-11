@@ -24,7 +24,7 @@ struct ButtonState {
     bool isCancel{};
     bool hover{};
     bool mousePressed{};
-    bool keyboardPressed{};
+    WPARAM keyboardPressedKey{};
 };
 
 bool Inside(HWND window, LPARAM position) {
@@ -40,8 +40,9 @@ void NotifyClicked(HWND window) {
 }
 
 void CancelPress(HWND window, ButtonState& state) {
-    const bool changed = state.mousePressed || state.keyboardPressed;
-    state.mousePressed = state.keyboardPressed = false;
+    const bool changed = state.mousePressed || state.keyboardPressedKey;
+    state.mousePressed = false;
+    state.keyboardPressedKey = 0;
     if (GetCapture() == window) ReleaseCapture();
     if (changed) InvalidateRect(window, nullptr, FALSE);
 }
@@ -62,7 +63,7 @@ void PaintButton(HWND window, ButtonState& state) {
         const auto radius = paint::ToPixels(style.cornerRadiusDip, dpi);
         const auto enabled = IsWindowEnabled(window) != FALSE;
         const auto background = !enabled ? style.disabledSurface
-                              : (state.mousePressed || state.keyboardPressed) ? style.pressed
+                              : (state.mousePressed || state.keyboardPressedKey) ? style.pressed
                               : state.hover   ? style.hover
                                               : style.background;
         paint::Clear(buffer.dc(), bounds, theme.palette.window);
@@ -174,19 +175,20 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_CAPTURECHANGED:
         if (state) CancelPress(window, *state);
         return 0;
+    case BM_CLICK:
+        NotifyClicked(window);
+        return 0;
     case WM_KEYDOWN:
         if (state && IsWindowEnabled(window) &&
             (wParam == VK_SPACE || wParam == VK_RETURN || (state->isCancel && wParam == VK_ESCAPE)) &&
-            !state->keyboardPressed) {
-            state->keyboardPressed = true;
+            !state->keyboardPressedKey) {
+            state->keyboardPressedKey = wParam;
             InvalidateRect(window, nullptr, FALSE);
         }
         return 0;
     case WM_KEYUP:
-        if (state &&
-            (wParam == VK_SPACE || wParam == VK_RETURN || (state->isCancel && wParam == VK_ESCAPE)) &&
-            state->keyboardPressed) {
-            state->keyboardPressed = false;
+        if (state && state->keyboardPressedKey == wParam) {
+            state->keyboardPressedKey = 0;
             InvalidateRect(window, nullptr, FALSE);
             NotifyClicked(window);
         }
@@ -216,11 +218,12 @@ HWND Create(const wchar_t* className, const ButtonOptions& options) {
         return nullptr;
     }
     const auto dpi = paint::Dpi(options.parent);
+    const int id = options.isCancel ? IDCANCEL : options.id;
     const auto window = CreateWindowExW(
         0, className, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
         DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), internal::Instance(),
         const_cast<ButtonOptions*>(&options));
     if (window && !options.appearance.background.has_value() && options.isDefault) {
         auto appearance = options.appearance;
@@ -229,6 +232,7 @@ HWND Create(const wchar_t* className, const ButtonOptions& options) {
     } else if (window) {
         SetStyleOverride(window, options.appearance);
     }
+    if (window && options.isDefault) SendMessageW(options.parent, DM_SETDEFID, id, 0);
     return window;
 }
 

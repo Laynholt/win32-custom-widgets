@@ -15,10 +15,35 @@ FontSpec ResolveLabelFont(const Theme& theme, const StyleOverride& local);
 namespace {
 
 int clicks;
+int dialogClicks;
+int dialogCommand;
 
 LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_COMMAND && HIWORD(wParam) == BN_CLICKED) ++clicks;
     return DefWindowProcW(window, message, wParam, lParam);
+}
+
+INT_PTR CALLBACK DialogProc(HWND, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_COMMAND) {
+        dialogCommand = LOWORD(wParam);
+        if (HIWORD(wParam) == BN_CLICKED && lParam) ++dialogClicks;
+    }
+    return FALSE;
+}
+
+HWND TestDialog(HINSTANCE instance) {
+    struct alignas(DWORD) Template {
+        DLGTEMPLATE dialog{WS_POPUP | WS_CAPTION | DS_CONTROL, 0, 0, 0, 0, 200, 100};
+        WORD menu{};
+        WORD windowClass{};
+        WORD title{};
+    } dialogTemplate;
+    return CreateDialogIndirectParamW(instance, &dialogTemplate.dialog, nullptr, DialogProc, 0);
+}
+
+bool DialogKey(HWND dialog, WPARAM key) {
+    MSG message{dialog, WM_KEYDOWN, key, 0};
+    return IsDialogMessageW(dialog, &message) != FALSE;
 }
 
 void PumpMessages() {
@@ -143,6 +168,16 @@ int main() {
     SendMessageW(button, WM_KEYUP, VK_RETURN, 0);
     CHECK(clicks == 3);
 
+    SetFocus(button);
+    SendMessageW(button, WM_KEYDOWN, VK_SPACE, 0);
+    SendMessageW(button, WM_KEYUP, VK_RETURN, 0);
+    CHECK(clicks == 3);
+    SendMessageW(button, WM_CANCELMODE, 0, 0);
+    SendMessageW(button, WM_KEYDOWN, VK_RETURN, 0);
+    SendMessageW(button, WM_KEYUP, VK_SPACE, 0);
+    CHECK(clicks == 3);
+    SendMessageW(button, WM_CANCELMODE, 0, 0);
+
     SendMessageW(button, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(5, 5));
     SetCapture(parent);
     SendMessageW(button, WM_LBUTTONUP, 0, MAKELPARAM(5, 5));
@@ -166,6 +201,38 @@ int main() {
     SetFocus(cancelButton);
     Key(cancelButton, VK_ESCAPE);
     CHECK(clicks == 5);
+
+    const auto dialog = TestDialog(instance);
+    CHECK(dialog != nullptr);
+    buttonOptions.parent = dialog;
+    buttonOptions.id = 40;
+    buttonOptions.isDefault = true;
+    buttonOptions.isCancel = false;
+    const auto dialogDefault = wcw::CreateButton(buttonOptions);
+    CHECK(dialogDefault != nullptr);
+    const auto defaultId = SendMessageW(dialog, DM_GETDEFID, 0, 0);
+    CHECK(HIWORD(defaultId) == DC_HASDEFID);
+    CHECK(LOWORD(defaultId) == 40);
+    SendMessageW(dialogDefault, BM_CLICK, 0, 0);
+    CHECK(dialogClicks == 1);
+    EnableWindow(dialogDefault, FALSE);
+    SendMessageW(dialogDefault, BM_CLICK, 0, 0);
+    CHECK(dialogClicks == 1);
+    EnableWindow(dialogDefault, TRUE);
+    SetFocus(dialog);
+    CHECK(DialogKey(dialog, VK_RETURN));
+    CHECK(dialogClicks == 2);
+
+    buttonOptions.id = 41;
+    buttonOptions.isDefault = false;
+    buttonOptions.isCancel = true;
+    const auto dialogCancel = wcw::CreateButton(buttonOptions);
+    CHECK(dialogCancel != nullptr);
+    CHECK(GetDlgCtrlID(dialogCancel) == IDCANCEL);
+    dialogCommand = 0;
+    SetFocus(dialog);
+    CHECK(DialogKey(dialog, VK_ESCAPE));
+    CHECK(dialogCommand == IDCANCEL);
 
     const std::array displays{label, image, separator, panel};
     for (const auto display : displays) {
@@ -200,6 +267,9 @@ int main() {
 
     DestroyWindow(defaultButton);
     DestroyWindow(cancelButton);
+    DestroyWindow(dialogDefault);
+    DestroyWindow(dialogCancel);
+    DestroyWindow(dialog);
     for (const auto control : controls) DestroyWindow(control);
     wcw::Shutdown();
     DestroyWindow(parent);
