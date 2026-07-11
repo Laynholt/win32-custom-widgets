@@ -1,0 +1,10 @@
+.worktrees/
+build/
+build-*/
+.vs/
+*.user
+*.obj
+*.pdb
+*.ilk
+*.exe
+
