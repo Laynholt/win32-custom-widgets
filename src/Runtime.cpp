@@ -61,7 +61,8 @@ bool Initialize(HINSTANCE instance) {
         return false;
     }
     state.instance = instance;
-    if (!internal::RegisterButtonClasses() || !internal::RegisterDisplayClasses()) {
+    if (!internal::RegisterButtonClasses() || !internal::RegisterDisplayClasses() ||
+        !internal::RegisterTextBoxClass()) {
         Gdiplus::GdiplusShutdown(state.gdiplusToken);
         state.gdiplusToken = 0;
         state.instance = nullptr;
@@ -101,14 +102,14 @@ Theme GetTheme() {
 bool SetStyleOverride(HWND window, const StyleOverride& style) {
     if (!IsOwnedLibraryWindow(window)) return false;
     State().overrides[window] = style;
-    InvalidateRect(window, nullptr, FALSE);
+    SendMessageW(window, internal::ThemeChangedMessage, 0, 0);
     return true;
 }
 
 bool ClearStyleOverride(HWND window) {
     if (!IsOwnedLibraryWindow(window)) return false;
     State().overrides.erase(window);
-    InvalidateRect(window, nullptr, FALSE);
+    SendMessageW(window, internal::ThemeChangedMessage, 0, 0);
     return true;
 }
 
@@ -140,6 +141,8 @@ void UnregisterWindow(HWND window) {
     State().windows.erase(window);
     State().overrides.erase(window);
 }
+
+bool IsLibraryWindow(HWND window) { return IsOwnedLibraryWindow(window); }
 
 StyleOverride WindowStyleOverride(HWND window) {
     const auto found = State().overrides.find(window);

@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <string>
+#include <optional>
 
 namespace wcw {
 
@@ -30,6 +31,29 @@ struct ButtonOptions : ControlOptions {
     bool isCancel{};
 };
 
+struct TextBoxOptions : ControlOptions {
+    std::wstring placeholder;
+    bool readOnly{};
+    bool password{};
+};
+
+enum class NumericMode { Integer, Floating };
+
+struct NumericBoxOptions : TextBoxOptions {
+    NumericMode mode{NumericMode::Integer};
+    double minimum{};
+    double maximum{100};
+    double step{1};
+    double value{};
+};
+
+inline constexpr UINT WCN_VALUE_CHANGED = 0x5701;
+
+struct ValueChangedNotification {
+    NMHDR header;
+    double value;
+};
+
 struct ImageSource {
     enum class Kind { None, Icon, Bitmap };
 
@@ -50,5 +74,12 @@ HWND CreateImageView(const ControlOptions& options, ImageSource source,
                      ImageMode mode = ImageMode::Contain);
 HWND CreateSeparator(const ControlOptions& options, bool vertical = false);
 HWND CreatePanel(const ControlOptions& options);
+HWND CreateTextBox(const TextBoxOptions& options);
+bool SetTextBoxText(HWND textBox, const std::wstring& text);
+std::wstring GetTextBoxText(HWND textBox);
+bool SetValidationError(HWND textBox, bool error);
+HWND CreateNumericBox(const NumericBoxOptions& options);
+bool SetNumericValue(HWND numericBox, double value);
+std::optional<double> GetNumericValue(HWND numericBox);
 
 } // namespace wcw
