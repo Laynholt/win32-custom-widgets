@@ -28,13 +28,14 @@ Buffer::Buffer(HDC target, const RECT& bounds) : target_(target), bounds_(bounds
         return;
     }
     previous_ = SelectObject(memory_, bitmap_);
+    SetViewportOrgEx(memory_, -bounds.left, -bounds.top, nullptr);
 }
 
 Buffer::~Buffer() {
     if (!memory_) return;
     if (bitmap_) {
         BitBlt(target_, bounds_.left, bounds_.top, bounds_.right - bounds_.left,
-               bounds_.bottom - bounds_.top, memory_, 0, 0, SRCCOPY);
+               bounds_.bottom - bounds_.top, memory_, bounds_.left, bounds_.top, SRCCOPY);
         SelectObject(memory_, previous_);
         DeleteObject(bitmap_);
     }

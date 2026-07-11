@@ -28,6 +28,15 @@ RuntimeState& State() {
     return state;
 }
 
+bool IsOwnedLibraryWindow(HWND window) {
+    if (!IsWindow(window) || GetWindowThreadProcessId(window, nullptr) != GetCurrentThreadId() ||
+        !State().windows.contains(window)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 bool Initialize(HINSTANCE instance) {
@@ -84,20 +93,14 @@ Theme GetTheme() {
 }
 
 bool SetStyleOverride(HWND window, const StyleOverride& style) {
-    if (!IsWindow(window)) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return false;
-    }
+    if (!IsOwnedLibraryWindow(window)) return false;
     State().overrides[window] = style;
     InvalidateRect(window, nullptr, FALSE);
     return true;
 }
 
 bool ClearStyleOverride(HWND window) {
-    if (!IsWindow(window)) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return false;
-    }
+    if (!IsOwnedLibraryWindow(window)) return false;
     State().overrides.erase(window);
     InvalidateRect(window, nullptr, FALSE);
     return true;
