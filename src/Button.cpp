@@ -53,8 +53,7 @@ void PaintButton(HWND window, ButtonState& state) {
     const auto target = BeginPaint(window, &ps);
     RECT bounds{};
     GetClientRect(window, &bounds);
-    paint::Buffer buffer(target, bounds);
-    if (buffer) {
+    if (paint::Buffer buffer(target, bounds); buffer) {
         const auto dpi = paint::Dpi(window);
         const auto theme = GetTheme();
         const auto style = ResolveStyle(theme, internal::WindowStyleOverride(window));

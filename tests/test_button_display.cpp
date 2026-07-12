@@ -242,6 +242,18 @@ int main() {
         CHECK(GetFocus() != display);
     }
 
+    ShowWindow(parent, SW_SHOWNOACTIVATE);
+    ShowWindow(button, SW_SHOWNOACTIVATE);
+    CHECK(RedrawWindow(button, nullptr, nullptr,
+                       RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW) != FALSE);
+    const auto buttonDc = GetDC(button);
+    CHECK(buttonDc != nullptr);
+    if (buttonDc) {
+        const auto input = wcw::DarkTheme().palette.input;
+        CHECK(GetPixel(buttonDc, 5, 15) == RGB(input.r, input.g, input.b));
+        ReleaseDC(button, buttonDc);
+    }
+
     const auto bitmap = TestBitmap();
     CHECK(bitmap != nullptr);
     std::array<HWND, 3> bitmapViews{};

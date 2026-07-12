@@ -157,8 +157,7 @@ void PaintCombo(HWND window, const ComboState& state) {
     const auto target = BeginPaint(window, &ps);
     RECT bounds{};
     GetClientRect(window, &bounds);
-    paint::Buffer buffer(target, bounds);
-    if (buffer) {
+    if (paint::Buffer buffer(target, bounds); buffer) {
         const auto dpi = paint::Dpi(window);
         const auto theme = GetTheme();
         const auto style = ResolveStyle(theme, internal::WindowStyleOverride(window));
@@ -214,9 +213,8 @@ void PaintPopup(HWND window, const PopupState& popupState) {
     const auto target = BeginPaint(window, &ps);
     RECT bounds{};
     GetClientRect(window, &bounds);
-    paint::Buffer buffer(target, bounds);
     const auto* comboState = State(popupState.combo);
-    if (buffer && comboState) {
+    if (paint::Buffer buffer(target, bounds); buffer && comboState) {
         const auto dpi = paint::Dpi(window);
         const auto style = ResolveStyle(GetTheme(), internal::WindowStyleOverride(popupState.combo));
         paint::Clear(buffer.dc(), bounds, style.background);
