@@ -12,9 +12,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <commctrl.h>
 #include <memory>
 #include <new>
 #include <optional>
+#include <vector>
 #include <windowsx.h>
 
 namespace wcw {
@@ -36,6 +38,7 @@ struct ScrollState {
     DragAxis dragAxis{DragAxis::None};
     float dragGrabPx{};
     unsigned dpi{USER_DEFAULT_SCREEN_DPI};
+    std::vector<HWND> observedAncestors;
 };
 
 struct LayoutInfo {
@@ -49,6 +52,8 @@ struct LayoutInfo {
     bool horizontal{};
     bool vertical{};
 };
+
+LRESULT CALLBACK AncestorProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 StyleOverride Overlay(StyleOverride result, const StyleOverride& local) {
 #define WCW_OVERLAY(member) if (local.member) result.member = local.member
@@ -278,19 +283,46 @@ void CancelDrag(HWND window, ScrollState& state) {
     if (GetCapture() == window) ReleaseCapture();
 }
 
+void RemoveAncestorObservers(HWND scrollView, ScrollState& state) {
+    const auto id = reinterpret_cast<UINT_PTR>(scrollView);
+    for (const auto ancestor : state.observedAncestors)
+        if (IsWindow(ancestor)) RemoveWindowSubclass(ancestor, AncestorProc, id);
+    state.observedAncestors.clear();
+}
+
+void ObserveAncestors(HWND scrollView, ScrollState& state) {
+    const auto id = reinterpret_cast<UINT_PTR>(scrollView);
+    for (auto ancestor = GetParent(scrollView); ancestor; ancestor = GetParent(ancestor))
+        if (SetWindowSubclass(ancestor, AncestorProc, id,
+                              reinterpret_cast<DWORD_PTR>(scrollView)))
+            state.observedAncestors.push_back(ancestor);
+}
+
+LRESULT CALLBACK AncestorProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                              UINT_PTR, DWORD_PTR reference) {
+    const auto scrollView = reinterpret_cast<HWND>(reference);
+    if ((((message == WM_SHOWWINDOW || message == WM_ENABLE) && !wParam) ||
+         message == WM_DESTROY || message == WM_NCDESTROY) && IsWindow(scrollView))
+        SendMessageW(scrollView, WM_CANCELMODE, 0, 0);
+    return DefSubclassProc(window, message, wParam, lParam);
+}
+
 void ScrollWheel(HWND window, ScrollState& state, int delta, bool horizontal,
                  bool nativeHorizontal = false) {
-    const int notches = state.model.ConsumeWheelDelta(delta, horizontal);
+    const int normalizedDelta = horizontal && !nativeHorizontal ? -delta : delta;
+    const int notches = state.model.ConsumeWheelDelta(normalizedDelta, horizontal);
     if (!notches) return;
-    UINT lines{};
-    SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+    UINT units{3};
+    SystemParametersInfoW(nativeHorizontal ? SPI_GETWHEELSCROLLCHARS
+                                           : SPI_GETWHEELSCROLLLINES,
+                          0, &units, 0);
     const float page = horizontal ? state.model.Viewport().width : state.model.Viewport().height;
-    const float amount = lines == WHEEL_PAGESCROLL
+    const float amount = units == WHEEL_PAGESCROLL
                              ? page
-                             : DipToPx(16.0f * static_cast<float>(lines), paint::Dpi(window));
+                             : DipToPx(16.0f * static_cast<float>(units), paint::Dpi(window));
     auto offset = state.model.Offset();
     if (horizontal)
-        offset.x += (nativeHorizontal ? notches : -notches) * amount;
+        offset.x += notches * amount;
     else
         offset.y -= notches * amount;
     SetOffsetPixels(window, state, offset);
@@ -320,18 +352,22 @@ LRESULT ScrollProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     if (internal::HandleControlMessage(window, message, shared)) return shared;
     switch (message) {
     case WM_CREATE:
-        state->viewport = CreateWindowExW(0, ScrollViewportClass, L"",
+        state->viewport = CreateWindowExW(WS_EX_CONTROLPARENT, ScrollViewportClass, L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 0, 0, window, nullptr,
             internal::Instance(), nullptr);
         if (!state->viewport) return -1;
-        state->content = CreateWindowExW(0, ScrollContentClass, L"",
+        state->content = CreateWindowExW(WS_EX_CONTROLPARENT, ScrollContentClass, L"",
             WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 0, 0, state->viewport, nullptr,
             internal::Instance(), nullptr);
         if (!state->content) return -1;
+        ObserveAncestors(window, *state);
         ApplyLayout(window, *state);
         return 0;
     case WM_NCDESTROY:
-        if (state && state->dragAxis != DragAxis::None) CancelDrag(window, *state);
+        if (state) {
+            if (state->dragAxis != DragAxis::None) CancelDrag(window, *state);
+            RemoveAncestorObservers(window, *state);
+        }
         delete state;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         return DefWindowProcW(window, message, wParam, lParam);
@@ -480,7 +516,8 @@ HWND CreateScrollView(const ScrollViewOptions& options) {
     }
     const auto dpi = paint::Dpi(options.parent);
     const auto window = CreateWindowExW(
-        0, ScrollViewClass, L"", WS_CHILD | WS_TABSTOP | WS_CLIPCHILDREN | options.style,
+        WS_EX_CONTROLPARENT, ScrollViewClass, L"",
+        WS_CHILD | WS_TABSTOP | WS_CLIPCHILDREN | options.style,
         DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),

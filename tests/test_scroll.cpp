@@ -16,6 +16,36 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
+INT_PTR CALLBACK DialogProc(HWND, UINT message, WPARAM, LPARAM) {
+    return message == WM_INITDIALOG;
+}
+
+HWND TestDialog(HINSTANCE instance) {
+    struct alignas(DWORD) Template {
+        DLGTEMPLATE dialog{WS_POPUP | WS_CAPTION | DS_CONTROL, 0, 0, 0, 0, 240, 160};
+        WORD menu{};
+        WORD windowClass{};
+        WORD title{};
+    } dialogTemplate;
+    return CreateDialogIndirectParamW(instance, &dialogTemplate.dialog, nullptr, DialogProc, 0);
+}
+
+void DialogTab(HWND dialog, bool backwards = false) {
+    MSG message{GetFocus(), WM_KEYDOWN, VK_TAB, 0};
+    BYTE keys[256]{};
+    GetKeyboardState(keys);
+    const auto previousShift = keys[VK_SHIFT];
+    if (backwards) {
+        keys[VK_SHIFT] = 0x80;
+        SetKeyboardState(keys);
+    }
+    CHECK(IsDialogMessageW(dialog, &message) != FALSE);
+    if (backwards) {
+        keys[VK_SHIFT] = previousShift;
+        SetKeyboardState(keys);
+    }
+}
+
 struct ThreadCheck {
     HWND scrollView{};
     bool result{};
@@ -36,6 +66,14 @@ POINT PositionIn(HWND child, HWND ancestor) {
     POINT point{};
     MapWindowPoints(child, ancestor, &point, 1);
     return point;
+}
+
+void PumpMessages() {
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
 }
 
 } // namespace
@@ -113,6 +151,15 @@ int main() {
     const auto beforeHorizontal = wcw::GetScrollOffset(scrollView)->x;
     SendMessageW(scrollView, WM_MOUSEWHEEL, MAKEWPARAM(MK_SHIFT, -WHEEL_DELTA), 0);
     CHECK(wcw::GetScrollOffset(scrollView)->x > beforeHorizontal);
+    CHECK(wcw::SetScrollOffset(scrollView, {200, wcw::GetScrollOffset(scrollView)->y}));
+    const auto beforeMixedWheel = wcw::GetScrollOffset(scrollView)->x;
+    SendMessageW(scrollView, WM_MOUSEWHEEL, MAKEWPARAM(MK_SHIFT, WHEEL_DELTA / 2), 0);
+    SendMessageW(scrollView, WM_MOUSEHWHEEL, MAKEWPARAM(0, WHEEL_DELTA / 2), 0);
+    CHECK(Near(wcw::GetScrollOffset(scrollView)->x, beforeMixedWheel));
+    SendMessageW(scrollView, WM_MOUSEHWHEEL, MAKEWPARAM(0, WHEEL_DELTA / 2), 0);
+    CHECK(Near(wcw::GetScrollOffset(scrollView)->x, beforeMixedWheel));
+    SendMessageW(scrollView, WM_MOUSEHWHEEL, MAKEWPARAM(0, WHEEL_DELTA / 2), 0);
+    CHECK(wcw::GetScrollOffset(scrollView)->x > beforeMixedWheel);
 
     CHECK(wcw::SetScrollOffset(scrollView, {0, 0}));
     SendMessageW(scrollView, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(192, 5));
@@ -150,6 +197,73 @@ int main() {
     CHECK(wcw::SetScrollContentExtent(scrollView, {100, 80}));
     CHECK(wcw::GetScrollOffset(scrollView) == wcw::ScrollOffsetDip{});
     CHECK(PositionIn(content, scrollView).x == 0);
+
+    CHECK(wcw::SetScrollContentExtent(scrollView, {570, 500}));
+    CHECK(wcw::SetScrollOffset(scrollView, {999, 999}));
+    offset = wcw::GetScrollOffset(scrollView);
+    CHECK(offset && offset->x > 0 && offset->y > 0);
+    CHECK(wcw::SetScrollOffset(scrollView, {5, 5}));
+    CHECK(wcw::SetStyleOverride(scrollView, {.thumbSizeDip = 24.0f}));
+    CHECK((wcw::GetScrollOffset(scrollView) == wcw::ScrollOffsetDip{5, 5}));
+    wcw::SetTheme(wcw::LightTheme());
+    PumpMessages();
+    CHECK((wcw::GetScrollOffset(scrollView) == wcw::ScrollOffsetDip{5, 5}));
+    wcw::SetTheme(wcw::DarkTheme());
+
+    const auto container = CreateWindowExW(WS_EX_CONTROLPARENT, parentClass.lpszClassName, L"",
+        WS_CHILD | WS_VISIBLE, 0, 140, 240, 150, parent, nullptr, instance, nullptr);
+    auto lifecycleOptions = options;
+    lifecycleOptions.parent = container;
+    lifecycleOptions.id = 82;
+    lifecycleOptions.bounds = {0, 0, 200, 120};
+    const auto lifecycleScroll = wcw::CreateScrollView(lifecycleOptions);
+    ShowWindow(lifecycleScroll, SW_SHOW);
+    SendMessageW(lifecycleScroll, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(192, 5));
+    CHECK(GetCapture() == lifecycleScroll);
+    ShowWindow(parent, SW_HIDE);
+    CHECK(GetCapture() != lifecycleScroll);
+    ShowWindow(parent, SW_SHOW);
+    ShowWindow(container, SW_SHOW);
+    ShowWindow(lifecycleScroll, SW_SHOW);
+    SendMessageW(lifecycleScroll, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(192, 5));
+    CHECK(GetCapture() == lifecycleScroll);
+    EnableWindow(parent, FALSE);
+    CHECK(GetCapture() != lifecycleScroll);
+    EnableWindow(parent, TRUE);
+    SendMessageW(lifecycleScroll, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(192, 5));
+    CHECK(GetCapture() == lifecycleScroll);
+    DestroyWindow(container);
+    CHECK(GetCapture() != lifecycleScroll);
+    CHECK(!IsWindow(lifecycleScroll));
+
+    const auto dialog = TestDialog(instance);
+    CHECK(dialog != nullptr);
+    const auto before = CreateWindowExW(0, L"BUTTON", L"Before", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        5, 5, 60, 24, dialog, reinterpret_cast<HMENU>(91), instance, nullptr);
+    auto dialogOptions = options;
+    dialogOptions.parent = dialog;
+    dialogOptions.id = 92;
+    dialogOptions.bounds = {5, 35, 180, 70};
+    const auto dialogScroll = wcw::CreateScrollView(dialogOptions);
+    ShowWindow(dialogScroll, SW_SHOW);
+    const auto dialogContent = wcw::GetScrollContentWindow(dialogScroll);
+    const auto nested = CreateWindowExW(0, L"BUTTON", L"Nested",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP, 5, 5, 80, 24, dialogContent,
+        reinterpret_cast<HMENU>(93), instance, nullptr);
+    const auto after = CreateWindowExW(0, L"BUTTON", L"After", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        5, 115, 60, 24, dialog, reinterpret_cast<HMENU>(94), instance, nullptr);
+    ShowWindow(dialog, SW_SHOW);
+    SetFocus(before);
+    bool reachedNested{};
+    for (int index = 0; index < 3 && !reachedNested; ++index) {
+        DialogTab(dialog);
+        reachedNested = GetFocus() == nested;
+    }
+    CHECK(reachedNested);
+    SetFocus(after);
+    DialogTab(dialog, true);
+    CHECK(GetFocus() == nested || GetFocus() == dialogScroll);
+    DestroyWindow(dialog);
 
     ThreadCheck threadCheck{scrollView};
     const auto thread = CreateThread(nullptr, 0, CheckWrongThread, &threadCheck, 0, nullptr);
