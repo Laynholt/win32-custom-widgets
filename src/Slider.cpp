@@ -25,8 +25,24 @@ struct SliderState {
     double maximum{};
     double step{};
     double value{};
+    StyleOverride trackAppearance;
+    StyleOverride thumbAppearance;
+    int wheelRemainder{};
     bool dragging{};
 };
+
+StyleOverride Overlay(StyleOverride result, const StyleOverride& local) {
+#define WCW_OVERLAY(member) if (local.member) result.member = local.member
+    WCW_OVERLAY(background); WCW_OVERLAY(foreground); WCW_OVERLAY(mutedForeground);
+    WCW_OVERLAY(border); WCW_OVERLAY(hover); WCW_OVERLAY(pressed); WCW_OVERLAY(selected);
+    WCW_OVERLAY(disabledSurface); WCW_OVERLAY(disabledText); WCW_OVERLAY(focus);
+    WCW_OVERLAY(accent); WCW_OVERLAY(danger); WCW_OVERLAY(font); WCW_OVERLAY(borderWidthDip);
+    WCW_OVERLAY(focusWidthDip); WCW_OVERLAY(paddingXDip); WCW_OVERLAY(paddingYDip);
+    WCW_OVERLAY(spacingDip); WCW_OVERLAY(controlHeightDip); WCW_OVERLAY(cornerRadiusDip);
+    WCW_OVERLAY(trackThicknessDip); WCW_OVERLAY(thumbSizeDip); WCW_OVERLAY(indicatorSizeDip);
+#undef WCW_OVERLAY
+    return result;
+}
 
 bool IsSliderWindow(HWND window) {
     wchar_t name[32]{};
@@ -37,9 +53,9 @@ bool IsSliderWindow(HWND window) {
     return true;
 }
 
-double Normalize(const SliderState& state, double value) {
+double Normalize(const SliderState& state, double value, bool snap) {
     value = std::clamp(value, state.minimum, state.maximum);
-    if (value == state.minimum || value == state.maximum) return value;
+    if (!snap || value == state.minimum || value == state.maximum) return value;
     const auto steps = std::round((value - state.minimum) / state.step);
     return std::clamp(state.minimum + steps * state.step, state.minimum, state.maximum);
 }
@@ -51,8 +67,8 @@ void NotifyChanged(HWND window, double value) {
                  reinterpret_cast<LPARAM>(&notification));
 }
 
-bool SetValue(HWND window, SliderState& state, double value, bool notify) {
-    const auto normalized = Normalize(state, value);
+bool SetValue(HWND window, SliderState& state, double value, bool notify, bool snap = true) {
+    const auto normalized = Normalize(state, value, snap);
     if (normalized == state.value) return false;
     state.value = normalized;
     InvalidateRect(window, nullptr, FALSE);
@@ -60,15 +76,26 @@ bool SetValue(HWND window, SliderState& state, double value, bool notify) {
     return true;
 }
 
-void SetFromMouse(HWND window, SliderState& state, int x) {
+SliderGeometry Geometry(HWND window, const SliderState& state) {
     RECT bounds{};
     GetClientRect(window, &bounds);
     const auto dpi = paint::Dpi(window);
-    const auto radius = paint::ToPixels(9, dpi);
-    const auto start = radius;
-    const auto end = std::max(start, static_cast<float>(bounds.right) - radius);
-    const auto fraction = end == start ? 0.0 : std::clamp((x - start) / (end - start), 0.0f, 1.0f);
-    SetValue(window, state, state.minimum + fraction * (state.maximum - state.minimum), true);
+    const auto theme = GetTheme();
+    const auto base = internal::WindowStyleOverride(window);
+    const auto track = ResolveStyle(theme, Overlay(base, state.trackAppearance));
+    const auto thumb = ResolveStyle(theme, Overlay(base, state.thumbAppearance));
+    return {static_cast<float>(bounds.right), static_cast<float>(bounds.bottom),
+            paint::ToPixels(thumb.thumbSizeDip, dpi),
+            paint::ToPixels(track.trackThicknessDip, dpi),
+            static_cast<float>(state.minimum), static_cast<float>(state.maximum),
+            static_cast<float>(state.value)};
+}
+
+void SetFromMouse(HWND window, SliderState& state, int x) {
+    const auto geometry = Geometry(window, state);
+    SetValue(window, state,
+             geometry.ValueAt(static_cast<float>(x), static_cast<float>(state.minimum),
+                              static_cast<float>(state.maximum)), true);
 }
 
 void PaintSlider(HWND window, const SliderState& state) {
@@ -80,38 +107,38 @@ void PaintSlider(HWND window, const SliderState& state) {
     if (buffer) {
         const auto dpi = paint::Dpi(window);
         const auto theme = GetTheme();
-        const auto style = ResolveStyle(theme, internal::WindowStyleOverride(window));
+        const auto base = internal::WindowStyleOverride(window);
+        const auto trackStyle = ResolveStyle(theme, Overlay(base, state.trackAppearance));
+        const auto thumbStyle = ResolveStyle(theme, Overlay(base, state.thumbAppearance));
         const auto enabled = IsWindowEnabled(window) != FALSE;
         paint::Clear(buffer.dc(), bounds, theme.palette.window);
         Gdiplus::Graphics graphics(buffer.dc());
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
 
         const float height = static_cast<float>(bounds.bottom);
-        const float thumbRadius = std::min(height / 2.0f - 1.0f, paint::ToPixels(9, dpi));
-        const float trackHeight = std::max(2.0f, paint::ToPixels(4, dpi));
-        const float start = thumbRadius;
-        const float end = std::max(start, static_cast<float>(bounds.right) - thumbRadius);
-        const SliderGeometry geometry(start, end, static_cast<float>(state.minimum),
-                                      static_cast<float>(state.maximum),
-                                      static_cast<float>(state.value));
-        const Gdiplus::RectF track{start, (height - trackHeight) / 2.0f,
-                                   end - start, trackHeight};
-        paint::Fill(graphics, track, trackHeight / 2.0f,
-                    enabled ? style.background : style.disabledSurface);
-        if (geometry.thumbPx > start) {
-            const Gdiplus::RectF selected{start, track.Y, geometry.thumbPx - start, track.Height};
-            paint::Fill(graphics, selected, trackHeight / 2.0f,
-                        enabled ? style.accent : style.disabledText);
+        const auto geometry = Geometry(window, state);
+        const Gdiplus::RectF track{geometry.trackStartPx,
+                                   (height - geometry.trackThicknessPx) / 2.0f,
+                                   geometry.trackEndPx - geometry.trackStartPx,
+                                   geometry.trackThicknessPx};
+        const auto trackRadius = paint::ToPixels(trackStyle.cornerRadiusDip, dpi);
+        paint::Fill(graphics, track, trackRadius,
+                    enabled ? trackStyle.background : trackStyle.disabledSurface);
+        if (geometry.thumbPx > geometry.trackStartPx) {
+            const Gdiplus::RectF selected{geometry.trackStartPx, track.Y,
+                                         geometry.thumbPx - geometry.trackStartPx, track.Height};
+            paint::Fill(graphics, selected, trackRadius,
+                        enabled ? trackStyle.accent : trackStyle.disabledText);
         }
-        Gdiplus::SolidBrush thumb(paint::GdiPlusColor(enabled ? style.accent : style.disabledText));
-        graphics.FillEllipse(&thumb, geometry.thumbPx - thumbRadius, height / 2.0f - thumbRadius,
-                             thumbRadius * 2.0f, thumbRadius * 2.0f);
+        const float thumbRadius = geometry.thumbSizePx / 2.0f;
+        const Gdiplus::RectF thumb{geometry.thumbPx - thumbRadius,
+                                   height / 2.0f - thumbRadius,
+                                   geometry.thumbSizePx, geometry.thumbSizePx};
+        paint::Fill(graphics, thumb, paint::ToPixels(thumbStyle.cornerRadiusDip, dpi),
+                    enabled ? thumbStyle.accent : thumbStyle.disabledText);
         if (GetFocus() == window) {
-            const Gdiplus::RectF focus{geometry.thumbPx - thumbRadius,
-                                       height / 2.0f - thumbRadius,
-                                       thumbRadius * 2.0f, thumbRadius * 2.0f};
-            paint::Focus(graphics, focus, thumbRadius, style.focus,
-                         paint::ToPixels(style.focusWidthDip, dpi));
+            paint::Focus(graphics, thumb, paint::ToPixels(thumbStyle.cornerRadiusDip, dpi),
+                         thumbStyle.focus, paint::ToPixels(thumbStyle.focusWidthDip, dpi));
         }
     }
     EndPaint(window, &ps);
@@ -122,9 +149,13 @@ LRESULT SliderProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     if (message == WM_NCCREATE) {
         const auto options = static_cast<const SliderOptions*>(
             reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
-        auto created = std::make_unique<SliderState>(SliderState{
-            options->minimum, options->maximum, options->step, options->value});
-        created->value = Normalize(*created, options->value);
+        auto created = std::make_unique<SliderState>();
+        created->minimum = options->minimum;
+        created->maximum = options->maximum;
+        created->step = options->step;
+        created->trackAppearance = options->trackAppearance;
+        created->thumbAppearance = options->thumbAppearance;
+        created->value = Normalize(*created, options->value, true);
         internal::RegisterWindow(window);
         state = created.release();
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
@@ -179,11 +210,11 @@ LRESULT SliderProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
         if (!state || !IsWindowEnabled(window)) return 0;
         switch (wParam) {
         case VK_LEFT:
-        case VK_DOWN: SetValue(window, *state, state->value - state->step, true); break;
+        case VK_DOWN: SetValue(window, *state, state->value - state->step, true, false); break;
         case VK_RIGHT:
-        case VK_UP: SetValue(window, *state, state->value + state->step, true); break;
-        case VK_PRIOR: SetValue(window, *state, state->value + state->step * 10, true); break;
-        case VK_NEXT: SetValue(window, *state, state->value - state->step * 10, true); break;
+        case VK_UP: SetValue(window, *state, state->value + state->step, true, false); break;
+        case VK_PRIOR: SetValue(window, *state, state->value + state->step * 10, true, false); break;
+        case VK_NEXT: SetValue(window, *state, state->value - state->step * 10, true, false); break;
         case VK_HOME: SetValue(window, *state, state->minimum, true); break;
         case VK_END: SetValue(window, *state, state->maximum, true); break;
         default: break;
@@ -191,8 +222,11 @@ LRESULT SliderProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
         return 0;
     case WM_MOUSEWHEEL:
         if (state && IsWindowEnabled(window)) {
-            const int direction = GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 1 : -1;
-            SetValue(window, *state, state->value + direction * state->step, true);
+            state->wheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+            const int notches = state->wheelRemainder / WHEEL_DELTA;
+            state->wheelRemainder %= WHEEL_DELTA;
+            if (notches)
+                SetValue(window, *state, state->value + notches * state->step, true, false);
         }
         return 0;
     case internal::SliderSetValueMessage:

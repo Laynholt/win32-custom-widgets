@@ -97,6 +97,10 @@ int main() {
     sliderOptions.maximum = 100;
     sliderOptions.step = 2;
     sliderOptions.value = 50;
+    sliderOptions.trackAppearance.background = wcw::Color::FromRgb(1, 2, 3);
+    sliderOptions.trackAppearance.trackThicknessDip = 5.0f;
+    sliderOptions.thumbAppearance.accent = wcw::Color::FromRgb(4, 5, 6);
+    sliderOptions.thumbAppearance.thumbSizeDip = 16.0f;
     const auto slider = wcw::CreateSlider(sliderOptions);
     CHECK(slider != nullptr);
     Key(slider, VK_RIGHT);
@@ -130,6 +134,28 @@ int main() {
     CHECK(endpointSlider != nullptr);
     Key(endpointSlider, VK_END);
     CHECK(wcw::GetSliderValue(endpointSlider) == 100);
+    Key(endpointSlider, VK_LEFT);
+    CHECK(wcw::GetSliderValue(endpointSlider) == 70);
+
+    CHECK(wcw::SetSliderValue(endpointSlider, 0));
+    SendMessageW(endpointSlider, WM_MOUSEWHEEL, MAKEWPARAM(0, 240), 0);
+    CHECK(wcw::GetSliderValue(endpointSlider) == 60);
+    SendMessageW(endpointSlider, WM_MOUSEWHEEL, MAKEWPARAM(0, 60), 0);
+    CHECK(wcw::GetSliderValue(endpointSlider) == 60);
+    SendMessageW(endpointSlider, WM_MOUSEWHEEL, MAKEWPARAM(0, 60), 0);
+    CHECK(wcw::GetSliderValue(endpointSlider) == 90);
+    SendMessageW(endpointSlider, WM_MOUSEWHEEL, MAKEWPARAM(0, 0), 0);
+    CHECK(wcw::GetSliderValue(endpointSlider) == 90);
+
+    sliderOptions.id = 22;
+    sliderOptions.bounds.height = 2;
+    sliderOptions.step = 1;
+    sliderOptions.value = 0;
+    const auto lowSlider = wcw::CreateSlider(sliderOptions);
+    CHECK(lowSlider != nullptr);
+    SendMessageW(lowSlider, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(100, 1));
+    SendMessageW(lowSlider, WM_LBUTTONUP, 0, MAKELPARAM(100, 1));
+    CHECK(std::abs(*wcw::GetSliderValue(lowSlider) - 50) <= 1);
 
     wcw::ProgressBarOptions progressOptions;
     progressOptions.parent = parent;
@@ -151,6 +177,15 @@ int main() {
     PumpTimersFor(progress, 40);
     CHECK(GetUpdateRect(progress, nullptr, FALSE) != FALSE);
     UpdateWindow(progress);
+    ShowWindow(parent, SW_HIDE);
+    ValidateRect(progress, nullptr);
+    PumpTimersFor(progress, 40);
+    CHECK(GetUpdateRect(progress, nullptr, FALSE) == FALSE);
+    ShowWindow(parent, SW_SHOWNOACTIVATE);
+    ValidateRect(progress, nullptr);
+    PumpTimersFor(progress, 40);
+    CHECK(GetUpdateRect(progress, nullptr, FALSE) != FALSE);
+    UpdateWindow(progress);
     ShowWindow(progress, SW_HIDE);
     ValidateRect(progress, nullptr);
     PumpTimersFor(progress, 40);
@@ -163,6 +198,7 @@ int main() {
     CHECK(wcw::SetProgressIndeterminate(progress, false));
 
     DestroyWindow(progress);
+    DestroyWindow(lowSlider);
     DestroyWindow(endpointSlider);
     DestroyWindow(slider);
     DestroyWindow(toggle);

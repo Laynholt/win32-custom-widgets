@@ -29,7 +29,8 @@ struct Palette {
 
 struct Metrics {
     float borderWidthDip{1}, focusWidthDip{2}, paddingXDip{12}, paddingYDip{8}, spacingDip{8},
-          controlHeightDip{36}, cornerRadiusDip{8};
+          controlHeightDip{36}, cornerRadiusDip{8}, trackThicknessDip{4}, thumbSizeDip{18},
+          indicatorSizeDip{20};
 };
 
 struct Theme {

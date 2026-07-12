@@ -56,6 +56,8 @@ struct SliderOptions : ControlOptions {
     double maximum{100};
     double step{1};
     double value{};
+    StyleOverride trackAppearance;
+    StyleOverride thumbAppearance;
 };
 
 struct ProgressBarOptions : ControlOptions {

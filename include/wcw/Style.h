@@ -11,7 +11,7 @@ struct StyleOverride {
         disabledSurface, disabledText, focus, accent, danger;
     std::optional<FontSpec> font;
     std::optional<float> borderWidthDip, focusWidthDip, paddingXDip, paddingYDip, spacingDip,
-        controlHeightDip, cornerRadiusDip;
+        controlHeightDip, cornerRadiusDip, trackThicknessDip, thumbSizeDip, indicatorSizeDip;
 };
 
 struct ResolvedStyle {
@@ -19,7 +19,7 @@ struct ResolvedStyle {
         disabledText, focus, accent, danger;
     FontSpec font;
     float borderWidthDip, focusWidthDip, paddingXDip, paddingYDip, spacingDip, controlHeightDip,
-        cornerRadiusDip;
+        cornerRadiusDip, trackThicknessDip, thumbSizeDip, indicatorSizeDip;
 };
 
 ResolvedStyle ResolveStyle(const Theme& theme, const StyleOverride& local = {});

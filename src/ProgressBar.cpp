@@ -9,6 +9,7 @@
 #include "Internal.h"
 #include "Paint.h"
 
+#include <commctrl.h>
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -20,6 +21,7 @@ namespace {
 constexpr wchar_t ProgressBarClass[] = L"WcwProgressBar";
 constexpr UINT_PTR AnimationTimer = 1;
 constexpr UINT AnimationIntervalMs = 16;
+constexpr UINT ProgressUpdateTimerMessage = WM_APP + 0x57E;
 
 struct ProgressState {
     double minimum{};
@@ -48,6 +50,19 @@ void UpdateTimer(HWND window, ProgressState& state) {
         KillTimer(window, AnimationTimer);
         state.timerRunning = false;
     }
+}
+
+LRESULT CALLBACK ParentVisibilityProc(HWND parent, UINT message, WPARAM wParam, LPARAM lParam,
+                                      UINT_PTR subclassId, DWORD_PTR reference) {
+    if (message == WM_NCDESTROY) {
+        RemoveWindowSubclass(parent, ParentVisibilityProc, subclassId);
+        return DefSubclassProc(parent, message, wParam, lParam);
+    }
+    const auto result = DefSubclassProc(parent, message, wParam, lParam);
+    const auto progress = reinterpret_cast<HWND>(reference);
+    if ((message == WM_SHOWWINDOW || message == WM_WINDOWPOSCHANGED) && IsWindow(progress))
+        SendMessageW(progress, ProgressUpdateTimerMessage, 0, 0);
+    return result;
 }
 
 void PaintProgress(HWND window, const ProgressState& state) {
@@ -108,6 +123,9 @@ LRESULT ProgressProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam
     if (internal::HandleControlMessage(window, message, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
+        if (const auto parent = GetParent(window); parent)
+            RemoveWindowSubclass(parent, ParentVisibilityProc,
+                                 reinterpret_cast<UINT_PTR>(window));
         if (state && state->timerRunning) KillTimer(window, AnimationTimer);
         delete state;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
@@ -126,6 +144,9 @@ LRESULT ProgressProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam
             state->phase = std::fmod(state->phase + .025f, 1.0f);
             InvalidateRect(window, nullptr, FALSE);
         }
+        return 0;
+    case ProgressUpdateTimerMessage:
+        if (state) UpdateTimer(window, *state);
         return 0;
     case internal::ProgressSetValueMessage:
         if (state && lParam) {
@@ -190,7 +211,16 @@ HWND CreateProgressBar(const ProgressBarOptions& options) {
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
         const_cast<ProgressBarOptions*>(&options));
-    if (window) SetStyleOverride(window, options.appearance);
+    if (window && !SetWindowSubclass(options.parent, ParentVisibilityProc,
+                                     reinterpret_cast<UINT_PTR>(window),
+                                     reinterpret_cast<DWORD_PTR>(window))) {
+        DestroyWindow(window);
+        return nullptr;
+    }
+    if (window) {
+        SetStyleOverride(window, options.appearance);
+        SendMessageW(window, ProgressUpdateTimerMessage, 0, 0);
+    }
     return window;
 }
 

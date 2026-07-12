@@ -87,7 +87,7 @@ void PaintControl(HWND window, const BooleanState& state) {
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
 
         const float height = static_cast<float>(bounds.bottom - bounds.top);
-        const float indicatorHeight = std::min(height - 4.0f, paint::ToPixels(20, dpi));
+        const float indicatorHeight = std::min(height, paint::ToPixels(style.indicatorSizeDip, dpi));
         const float indicatorWidth = state.toggle ? indicatorHeight * 1.8f : indicatorHeight;
         const Gdiplus::RectF indicator{2.0f, (height - indicatorHeight) / 2.0f,
                                       indicatorWidth, indicatorHeight};
@@ -95,14 +95,13 @@ void PaintControl(HWND window, const BooleanState& state) {
                           : state.mousePressed || state.keyboardPressed ? style.pressed
                           : state.checked ? style.accent
                           : state.hover ? style.hover : style.background;
-        const float radius = state.toggle ? indicatorHeight / 2.0f
-                                          : paint::ToPixels(style.cornerRadiusDip, dpi);
+        const float radius = paint::ToPixels(style.cornerRadiusDip, dpi);
         paint::Fill(graphics, indicator, radius, active);
         paint::Border(graphics, indicator, radius, style.border,
                       paint::ToPixels(style.borderWidthDip, dpi));
 
         if (state.toggle) {
-            const float inset = 3.0f;
+            const float inset = indicatorHeight * .15f;
             const float diameter = indicatorHeight - inset * 2.0f;
             const float x = state.checked ? indicator.GetRight() - inset - diameter
                                           : indicator.X + inset;

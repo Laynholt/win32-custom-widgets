@@ -19,11 +19,30 @@ float ClampRadiusDip(float radiusDip, float widthDip, float heightDip) {
 
 SliderGeometry::SliderGeometry(float trackStartPx, float trackEndPx, float minimum, float maximum,
                                float value)
-    : thumbPx(trackStartPx) {
+    : thumbPx(trackStartPx), trackStartPx(trackStartPx), trackEndPx(trackEndPx) {
     if (minimum != maximum) {
         const auto normalized = (std::clamp(value, minimum, maximum) - minimum) / (maximum - minimum);
         thumbPx += normalized * (trackEndPx - trackStartPx);
     }
+}
+
+SliderGeometry::SliderGeometry(float controlWidthPx, float controlHeightPx,
+                               float desiredThumbSizePx, float desiredTrackThicknessPx,
+                               float minimum, float maximum, float value) {
+    const auto width = std::max(0.0f, controlWidthPx);
+    const auto height = std::max(0.0f, controlHeightPx);
+    thumbSizePx = std::clamp(desiredThumbSizePx, 0.0f, std::min(width, height));
+    trackThicknessPx = std::clamp(desiredTrackThicknessPx, 0.0f, height);
+    trackStartPx = thumbSizePx / 2.0f;
+    trackEndPx = std::max(trackStartPx, width - thumbSizePx / 2.0f);
+    thumbPx = SliderGeometry(trackStartPx, trackEndPx, minimum, maximum, value).thumbPx;
+}
+
+float SliderGeometry::ValueAt(float positionPx, float minimum, float maximum) const {
+    if (trackStartPx == trackEndPx) return minimum;
+    const auto fraction = std::clamp((positionPx - trackStartPx) /
+                                     (trackEndPx - trackStartPx), 0.0f, 1.0f);
+    return minimum + fraction * (maximum - minimum);
 }
 
 ScrollbarGeometry::ScrollbarGeometry(float trackStartPx, float trackEndPx, float contentSize,

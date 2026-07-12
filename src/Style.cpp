@@ -32,6 +32,9 @@ ResolvedStyle ResolveStyle(const Theme& theme, const StyleOverride& local) {
         ValueOr(local.spacingDip, theme.metrics.spacingDip),
         ValueOr(local.controlHeightDip, theme.metrics.controlHeightDip),
         ValueOr(local.cornerRadiusDip, theme.metrics.cornerRadiusDip),
+        ValueOr(local.trackThicknessDip, theme.metrics.trackThicknessDip),
+        ValueOr(local.thumbSizeDip, theme.metrics.thumbSizeDip),
+        ValueOr(local.indicatorSizeDip, theme.metrics.indicatorSizeDip),
     };
 }
 
