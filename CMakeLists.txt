@@ -15,8 +15,11 @@ add_library(Win32CustomWidgets STATIC src/Theme.cpp src/Style.cpp src/Geometry.c
                                       src/ComboModel.cpp src/ComboBox.cpp src/ScrollModel.cpp
                                       src/ScrollView.cpp src/Tooltip.cpp)
 add_library(Win32CustomWidgets::Win32CustomWidgets ALIAS Win32CustomWidgets)
-target_include_directories(Win32CustomWidgets PUBLIC include)
+target_include_directories(Win32CustomWidgets PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(Win32CustomWidgets PUBLIC cxx_std_20)
+target_compile_definitions(Win32CustomWidgets PUBLIC
+    UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_link_libraries(Win32CustomWidgets PUBLIC user32 gdi32 gdiplus comctl32 oleacc)
 
 option(WCW_BUILD_DEMO "Build the Win32 Custom Widgets gallery" ${PROJECT_IS_TOP_LEVEL})
@@ -71,4 +74,16 @@ add_test(NAME TooltipTests COMMAND TooltipTests)
 add_executable(AccessibilityTests tests/test_accessibility.cpp)
 target_link_libraries(AccessibilityTests PRIVATE Win32CustomWidgets::Win32CustomWidgets)
 add_test(NAME AccessibilityTests COMMAND AccessibilityTests)
+
+add_test(NAME ConsumerSmoke
+    COMMAND ${CMAKE_CTEST_COMMAND}
+        --build-and-test "${CMAKE_CURRENT_SOURCE_DIR}/tests/consumer"
+                         "${CMAKE_CURRENT_BINARY_DIR}/consumer-smoke"
+        --build-generator "${CMAKE_GENERATOR}"
+        --build-config "$<CONFIG>"
+        --build-options
+            "-DWCW_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+            "-DWCW_BUILD_DEMO=OFF"
+            "-DBUILD_TESTING=ON"
+        --test-command ${CMAKE_CTEST_COMMAND} -C "$<CONFIG>" --output-on-failure)
 endif()

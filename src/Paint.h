@@ -4,6 +4,7 @@
 #include <wcw/Theme.h>
 
 #include <windows.h>
+#include <objidl.h>
 #include <gdiplus.h>
 
 #include <memory>
