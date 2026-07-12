@@ -28,6 +28,7 @@ bool RegisterSliderClass();
 bool RegisterProgressBarClass();
 bool RegisterComboBoxClasses();
 bool RegisterScrollViewClasses();
+bool RegisterTooltipClass();
 
 inline constexpr UINT TextBoxSetTextMessage = WM_APP + 0x571;
 inline constexpr UINT TextBoxGetTextMessage = WM_APP + 0x572;

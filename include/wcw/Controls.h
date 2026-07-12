@@ -124,6 +124,15 @@ struct ScrollViewOptions : ControlOptions {
     StyleOverride thumbAppearance;
 };
 
+struct TooltipOptions {
+    std::wstring text;
+    UINT initialDelayMs{500};
+    UINT reshowDelayMs{100};
+    UINT autopopDelayMs{5000};
+    float maxWidthDip{320};
+    StyleOverride appearance;
+};
+
 inline constexpr UINT WCN_SELECTION_CHANGED = 0x5703;
 
 struct SelectionChangedNotification {
@@ -170,5 +179,8 @@ bool SetScrollContentExtent(HWND scrollView, ScrollExtentDip extent);
 bool SetScrollOffset(HWND scrollView, ScrollOffsetDip offset);
 std::optional<ScrollOffsetDip> GetScrollOffset(HWND scrollView);
 HWND GetScrollContentWindow(HWND scrollView);
+bool AttachTooltip(HWND target, const TooltipOptions& options);
+bool DetachTooltip(HWND target);
+void HideAllTooltips();
 
 } // namespace wcw
