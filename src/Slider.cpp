@@ -1,0 +1,270 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <wcw/Controls.h>
+#include <wcw/Geometry.h>
+#include <wcw/Runtime.h>
+
+#include "Internal.h"
+#include "Paint.h"
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+#include <new>
+#include <windowsx.h>
+
+namespace wcw {
+namespace {
+
+constexpr wchar_t SliderClass[] = L"WcwSlider";
+
+struct SliderState {
+    double minimum{};
+    double maximum{};
+    double step{};
+    double value{};
+    bool dragging{};
+};
+
+bool IsSliderWindow(HWND window) {
+    wchar_t name[32]{};
+    if (!IsWindow(window) || !GetClassNameW(window, name, 32) || wcscmp(name, SliderClass) != 0) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return false;
+    }
+    return true;
+}
+
+double Normalize(const SliderState& state, double value) {
+    value = std::clamp(value, state.minimum, state.maximum);
+    if (value == state.minimum || value == state.maximum) return value;
+    const auto steps = std::round((value - state.minimum) / state.step);
+    return std::clamp(state.minimum + steps * state.step, state.minimum, state.maximum);
+}
+
+void NotifyChanged(HWND window, double value) {
+    ValueChangedNotification notification{{window, static_cast<UINT_PTR>(GetDlgCtrlID(window)),
+                                            WCN_VALUE_CHANGED}, value};
+    SendMessageW(GetParent(window), WM_NOTIFY, notification.header.idFrom,
+                 reinterpret_cast<LPARAM>(&notification));
+}
+
+bool SetValue(HWND window, SliderState& state, double value, bool notify) {
+    const auto normalized = Normalize(state, value);
+    if (normalized == state.value) return false;
+    state.value = normalized;
+    InvalidateRect(window, nullptr, FALSE);
+    if (notify) NotifyChanged(window, normalized);
+    return true;
+}
+
+void SetFromMouse(HWND window, SliderState& state, int x) {
+    RECT bounds{};
+    GetClientRect(window, &bounds);
+    const auto dpi = paint::Dpi(window);
+    const auto radius = paint::ToPixels(9, dpi);
+    const auto start = radius;
+    const auto end = std::max(start, static_cast<float>(bounds.right) - radius);
+    const auto fraction = end == start ? 0.0 : std::clamp((x - start) / (end - start), 0.0f, 1.0f);
+    SetValue(window, state, state.minimum + fraction * (state.maximum - state.minimum), true);
+}
+
+void PaintSlider(HWND window, const SliderState& state) {
+    PAINTSTRUCT ps{};
+    const auto target = BeginPaint(window, &ps);
+    RECT bounds{};
+    GetClientRect(window, &bounds);
+    paint::Buffer buffer(target, bounds);
+    if (buffer) {
+        const auto dpi = paint::Dpi(window);
+        const auto theme = GetTheme();
+        const auto style = ResolveStyle(theme, internal::WindowStyleOverride(window));
+        const auto enabled = IsWindowEnabled(window) != FALSE;
+        paint::Clear(buffer.dc(), bounds, theme.palette.window);
+        Gdiplus::Graphics graphics(buffer.dc());
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+
+        const float height = static_cast<float>(bounds.bottom);
+        const float thumbRadius = std::min(height / 2.0f - 1.0f, paint::ToPixels(9, dpi));
+        const float trackHeight = std::max(2.0f, paint::ToPixels(4, dpi));
+        const float start = thumbRadius;
+        const float end = std::max(start, static_cast<float>(bounds.right) - thumbRadius);
+        const SliderGeometry geometry(start, end, static_cast<float>(state.minimum),
+                                      static_cast<float>(state.maximum),
+                                      static_cast<float>(state.value));
+        const Gdiplus::RectF track{start, (height - trackHeight) / 2.0f,
+                                   end - start, trackHeight};
+        paint::Fill(graphics, track, trackHeight / 2.0f,
+                    enabled ? style.background : style.disabledSurface);
+        if (geometry.thumbPx > start) {
+            const Gdiplus::RectF selected{start, track.Y, geometry.thumbPx - start, track.Height};
+            paint::Fill(graphics, selected, trackHeight / 2.0f,
+                        enabled ? style.accent : style.disabledText);
+        }
+        Gdiplus::SolidBrush thumb(paint::GdiPlusColor(enabled ? style.accent : style.disabledText));
+        graphics.FillEllipse(&thumb, geometry.thumbPx - thumbRadius, height / 2.0f - thumbRadius,
+                             thumbRadius * 2.0f, thumbRadius * 2.0f);
+        if (GetFocus() == window) {
+            const Gdiplus::RectF focus{geometry.thumbPx - thumbRadius,
+                                       height / 2.0f - thumbRadius,
+                                       thumbRadius * 2.0f, thumbRadius * 2.0f};
+            paint::Focus(graphics, focus, thumbRadius, style.focus,
+                         paint::ToPixels(style.focusWidthDip, dpi));
+        }
+    }
+    EndPaint(window, &ps);
+}
+
+LRESULT SliderProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    auto state = reinterpret_cast<SliderState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (message == WM_NCCREATE) {
+        const auto options = static_cast<const SliderOptions*>(
+            reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+        auto created = std::make_unique<SliderState>(SliderState{
+            options->minimum, options->maximum, options->step, options->value});
+        created->value = Normalize(*created, options->value);
+        internal::RegisterWindow(window);
+        state = created.release();
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+    }
+
+    LRESULT shared{};
+    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    switch (message) {
+    case WM_NCDESTROY:
+        if (GetCapture() == window) ReleaseCapture();
+        delete state;
+        SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        return DefWindowProcW(window, message, wParam, lParam);
+    case WM_GETDLGCODE:
+        return DLGC_WANTARROWS;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    case WM_ENABLE:
+        if (state && !wParam && state->dragging) {
+            state->dragging = false;
+            if (GetCapture() == window) ReleaseCapture();
+        }
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        if (state) state->dragging = false;
+        if (message == WM_CANCELMODE && GetCapture() == window) ReleaseCapture();
+        return 0;
+    case WM_LBUTTONDOWN:
+        if (state && IsWindowEnabled(window)) {
+            SetFocus(window);
+            SetCapture(window);
+            state->dragging = true;
+            SetFromMouse(window, *state, GET_X_LPARAM(lParam));
+        }
+        return 0;
+    case WM_MOUSEMOVE:
+        if (state && state->dragging && GetCapture() == window)
+            SetFromMouse(window, *state, GET_X_LPARAM(lParam));
+        return 0;
+    case WM_LBUTTONUP:
+        if (state && state->dragging) {
+            if (GetCapture() == window) SetFromMouse(window, *state, GET_X_LPARAM(lParam));
+            state->dragging = false;
+            if (GetCapture() == window) ReleaseCapture();
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (!state || !IsWindowEnabled(window)) return 0;
+        switch (wParam) {
+        case VK_LEFT:
+        case VK_DOWN: SetValue(window, *state, state->value - state->step, true); break;
+        case VK_RIGHT:
+        case VK_UP: SetValue(window, *state, state->value + state->step, true); break;
+        case VK_PRIOR: SetValue(window, *state, state->value + state->step * 10, true); break;
+        case VK_NEXT: SetValue(window, *state, state->value - state->step * 10, true); break;
+        case VK_HOME: SetValue(window, *state, state->minimum, true); break;
+        case VK_END: SetValue(window, *state, state->maximum, true); break;
+        default: break;
+        }
+        return 0;
+    case WM_MOUSEWHEEL:
+        if (state && IsWindowEnabled(window)) {
+            const int direction = GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 1 : -1;
+            SetValue(window, *state, state->value + direction * state->step, true);
+        }
+        return 0;
+    case internal::SliderSetValueMessage:
+        if (state && lParam) return SetValue(window, *state, *reinterpret_cast<double*>(lParam), false) || TRUE;
+        return FALSE;
+    case internal::SliderGetValueMessage:
+        if (state && lParam) {
+            *reinterpret_cast<std::optional<double>*>(lParam) = state->value;
+            return TRUE;
+        }
+        return FALSE;
+    case WM_PAINT:
+        if (state) PaintSlider(window, *state);
+        return 0;
+    default:
+        return DefWindowProcW(window, message, wParam, lParam);
+    }
+}
+
+LRESULT CALLBACK SliderProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    try {
+        return SliderProcImpl(window, message, wParam, lParam);
+    } catch (const std::bad_alloc&) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    } catch (...) {
+        SetLastError(ERROR_GEN_FAILURE);
+    }
+    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
+}
+
+} // namespace
+
+HWND CreateSlider(const SliderOptions& options) {
+    if (!options.parent || !IsWindow(options.parent)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return nullptr;
+    }
+    if (!std::isfinite(options.minimum) || !std::isfinite(options.maximum) ||
+        !std::isfinite(options.step) || !std::isfinite(options.value) || options.step <= 0 ||
+        options.minimum >= options.maximum) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    const auto dpi = paint::Dpi(options.parent);
+    const auto window = CreateWindowExW(
+        0, SliderClass, L"", WS_CHILD | WS_TABSTOP | options.style,
+        DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
+        DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
+        const_cast<SliderOptions*>(&options));
+    if (window) SetStyleOverride(window, options.appearance);
+    return window;
+}
+
+bool SetSliderValue(HWND slider, double value) {
+    if (!IsSliderWindow(slider)) return false;
+    if (!std::isfinite(value)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return false;
+    }
+    return SendMessageW(slider, internal::SliderSetValueMessage, 0,
+                        reinterpret_cast<LPARAM>(&value)) != FALSE;
+}
+
+std::optional<double> GetSliderValue(HWND slider) {
+    std::optional<double> value;
+    if (IsSliderWindow(slider))
+        SendMessageW(slider, internal::SliderGetValueMessage, 0, reinterpret_cast<LPARAM>(&value));
+    return value;
+}
+
+namespace internal {
+bool RegisterSliderClass() { return RegisterControlClass(SliderClass, SliderProc); }
+} // namespace internal
+} // namespace wcw

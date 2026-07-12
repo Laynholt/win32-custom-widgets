@@ -3,7 +3,8 @@ project(Win32CustomWidgets LANGUAGES CXX)
 
 add_library(Win32CustomWidgets STATIC src/Theme.cpp src/Style.cpp src/Geometry.cpp
                                       src/Runtime.cpp src/Paint.cpp src/Button.cpp src/Display.cpp
-                                      src/TextBox.cpp src/NumericModel.cpp src/NumericBox.cpp)
+                                      src/TextBox.cpp src/NumericModel.cpp src/NumericBox.cpp
+                                      src/BooleanControl.cpp src/Slider.cpp src/ProgressBar.cpp)
 add_library(Win32CustomWidgets::Win32CustomWidgets ALIAS Win32CustomWidgets)
 target_include_directories(Win32CustomWidgets PUBLIC include)
 target_compile_features(Win32CustomWidgets PUBLIC cxx_std_20)
@@ -29,3 +30,7 @@ add_test(NAME ButtonDisplayTests COMMAND ButtonDisplayTests)
 add_executable(TextNumericTests tests/test_text_numeric.cpp)
 target_link_libraries(TextNumericTests PRIVATE Win32CustomWidgets::Win32CustomWidgets)
 add_test(NAME TextNumericTests COMMAND TextNumericTests)
+
+add_executable(ValueControlsTests tests/test_value_controls.cpp)
+target_link_libraries(ValueControlsTests PRIVATE Win32CustomWidgets::Win32CustomWidgets)
+add_test(NAME ValueControlsTests COMMAND ValueControlsTests)

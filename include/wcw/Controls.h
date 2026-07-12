@@ -47,11 +47,35 @@ struct NumericBoxOptions : TextBoxOptions {
     double value{};
 };
 
+struct CheckableOptions : ControlOptions {
+    bool checked{};
+};
+
+struct SliderOptions : ControlOptions {
+    double minimum{};
+    double maximum{100};
+    double step{1};
+    double value{};
+};
+
+struct ProgressBarOptions : ControlOptions {
+    double minimum{};
+    double maximum{100};
+    double value{};
+    bool indeterminate{};
+};
+
 inline constexpr UINT WCN_VALUE_CHANGED = 0x5701;
+inline constexpr UINT WCN_CHECK_CHANGED = 0x5702;
 
 struct ValueChangedNotification {
     NMHDR header;
     double value;
+};
+
+struct CheckChangedNotification {
+    NMHDR header;
+    bool checked;
 };
 
 struct ImageSource {
@@ -81,5 +105,16 @@ bool SetValidationError(HWND textBox, bool error);
 HWND CreateNumericBox(const NumericBoxOptions& options);
 bool SetNumericValue(HWND numericBox, double value);
 std::optional<double> GetNumericValue(HWND numericBox);
+HWND CreateCheckbox(const CheckableOptions& options);
+HWND CreateToggle(const CheckableOptions& options);
+bool SetChecked(HWND control, bool checked);
+bool GetChecked(HWND control);
+HWND CreateSlider(const SliderOptions& options);
+bool SetSliderValue(HWND slider, double value);
+std::optional<double> GetSliderValue(HWND slider);
+HWND CreateProgressBar(const ProgressBarOptions& options);
+bool SetProgressValue(HWND progressBar, double value);
+std::optional<double> GetProgressValue(HWND progressBar);
+bool SetProgressIndeterminate(HWND progressBar, bool indeterminate);
 
 } // namespace wcw
