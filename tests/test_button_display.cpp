@@ -135,6 +135,16 @@ int main() {
     GetWindowRect(button, &createdBounds);
     CHECK(createdBounds.right - createdBounds.left ==
           wcw::DipToPx(100.6f, GetDpiForWindow(parent)));
+    CHECK(wcw::SetStyleOverride(button, {.cornerRadiusDip = 12.0f}));
+    const auto region = CreateRectRgn(0, 0, 0, 0);
+    CHECK(region != nullptr);
+    CHECK(GetWindowRgn(button, region) != ERROR);
+    RECT buttonBounds{};
+    GetClientRect(button, &buttonBounds);
+    CHECK(!PtInRegion(region, 0, 0));
+    CHECK(PtInRegion(region, buttonBounds.right / 2, buttonBounds.bottom / 2));
+    DeleteObject(region);
+    CHECK(wcw::SetStyleOverride(button, {.cornerRadiusDip = 0.0f}));
     wchar_t text[32]{};
     CHECK(GetWindowTextW(button, text, 32) == 6);
     CHECK(std::wstring_view(text) == L"Button");

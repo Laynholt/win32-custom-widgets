@@ -1,4 +1,5 @@
 #include <wcw/Runtime.h>
+#include <wcw/Geometry.h>
 
 #include "Internal.h"
 #include "Accessibility.h"
@@ -7,6 +8,7 @@
 #include <commctrl.h>
 #include <gdiplus.h>
 
+#include <algorithm>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,6 +40,25 @@ bool IsOwnedLibraryWindow(HWND window) {
         return false;
     }
     return true;
+}
+
+void UpdateWindowRegion(HWND window) {
+    RECT bounds{};
+    if (!GetClientRect(window, &bounds)) return;
+    const int width = bounds.right - bounds.left;
+    const int height = bounds.bottom - bounds.top;
+    const auto found = State().overrides.find(window);
+    const auto local = found == State().overrides.end() ? StyleOverride{} : found->second;
+    const auto style = ResolveStyle(State().theme, local);
+    const int radius = (std::max)(
+        0, (std::min)({DipToPx(style.cornerRadiusDip, paint::Dpi(window)), width / 2, height / 2}));
+    if (!radius) {
+        SetWindowRgn(window, nullptr, TRUE);
+        return;
+    }
+    const auto region = CreateRoundRectRgn(0, 0, width + 1, height + 1,
+                                           radius * 2, radius * 2);
+    if (region && !SetWindowRgn(window, region, TRUE)) DeleteObject(region);
 }
 
 } // namespace
@@ -192,6 +213,7 @@ StyleOverride WindowStyleOverride(HWND window) {
 bool HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                           LRESULT& result) {
     if (HandleAccessibilityMessage(window, message, wParam, lParam, result)) return true;
+    if (message == WM_SIZE || message == ThemeChangedMessage) UpdateWindowRegion(window);
     switch (message) {
     case WM_ERASEBKGND:
         result = 1;
