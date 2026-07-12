@@ -94,7 +94,10 @@ void Border(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float rad
     if (width <= 0) return;
     Gdiplus::Pen pen(GdiPlusColor(color), width);
     pen.SetAlignment(Gdiplus::PenAlignmentInset);
-    const auto path = RoundedPath(bounds, radius);
+    auto outline = bounds;
+    outline.Width = (std::max)(0.0f, outline.Width - 1.0f);
+    outline.Height = (std::max)(0.0f, outline.Height - 1.0f);
+    const auto path = RoundedPath(outline, radius);
     graphics.DrawPath(&pen, path.get());
 }
 

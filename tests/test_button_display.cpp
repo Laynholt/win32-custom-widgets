@@ -261,6 +261,14 @@ int main() {
     if (buttonDc) {
         const auto input = wcw::DarkTheme().palette.input;
         CHECK(GetPixel(buttonDc, 5, 15) == RGB(input.r, input.g, input.b));
+        RECT rendered{};
+        GetClientRect(button, &rendered);
+        const auto border = wcw::DarkTheme().palette.border;
+        const auto borderColor = RGB(border.r, border.g, border.b);
+        CHECK(GetPixel(buttonDc, rendered.right / 2, 0) == borderColor);
+        CHECK(GetPixel(buttonDc, rendered.right / 2, rendered.bottom - 1) == borderColor);
+        CHECK(GetPixel(buttonDc, 0, rendered.bottom / 2) == borderColor);
+        CHECK(GetPixel(buttonDc, rendered.right - 1, rendered.bottom / 2) == borderColor);
         ReleaseDC(button, buttonDc);
     }
 
