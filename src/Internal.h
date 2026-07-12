@@ -27,6 +27,7 @@ bool RegisterBooleanControlClasses();
 bool RegisterSliderClass();
 bool RegisterProgressBarClass();
 bool RegisterComboBoxClasses();
+bool RegisterScrollViewClasses();
 
 inline constexpr UINT TextBoxSetTextMessage = WM_APP + 0x571;
 inline constexpr UINT TextBoxGetTextMessage = WM_APP + 0x572;
@@ -44,6 +45,10 @@ inline constexpr UINT ProgressSetIndeterminateMessage = WM_APP + 0x57D;
 inline constexpr UINT ComboSetItemsMessage = WM_APP + 0x57E;
 inline constexpr UINT ComboSetSelectionMessage = WM_APP + 0x57F;
 inline constexpr UINT ComboGetSelectionMessage = WM_APP + 0x580;
+inline constexpr UINT ScrollSetExtentMessage = WM_APP + 0x581;
+inline constexpr UINT ScrollSetOffsetMessage = WM_APP + 0x582;
+inline constexpr UINT ScrollGetOffsetMessage = WM_APP + 0x583;
+inline constexpr UINT ScrollGetContentMessage = WM_APP + 0x584;
 
 HWND CreateNumericBoxWindow(const NumericBoxOptions& options);
 bool IsTextBoxWindow(HWND window, bool numericOnly = false);

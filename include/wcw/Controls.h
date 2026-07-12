@@ -104,6 +104,26 @@ struct ComboBoxOptions : ControlOptions {
     float popupHeightDip{240};
 };
 
+struct ScrollExtentDip {
+    float width{};
+    float height{};
+
+    friend constexpr bool operator==(const ScrollExtentDip&, const ScrollExtentDip&) = default;
+};
+
+struct ScrollOffsetDip {
+    float x{};
+    float y{};
+
+    friend constexpr bool operator==(const ScrollOffsetDip&, const ScrollOffsetDip&) = default;
+};
+
+struct ScrollViewOptions : ControlOptions {
+    ScrollExtentDip contentExtent{};
+    StyleOverride trackAppearance;
+    StyleOverride thumbAppearance;
+};
+
 inline constexpr UINT WCN_SELECTION_CHANGED = 0x5703;
 
 struct SelectionChangedNotification {
@@ -145,5 +165,10 @@ HWND CreateComboBox(const ComboBoxOptions& options);
 bool SetComboItems(HWND comboBox, const std::vector<ComboItem>& items);
 bool SetComboSelection(HWND comboBox, int index);
 int GetComboSelection(HWND comboBox);
+HWND CreateScrollView(const ScrollViewOptions& options);
+bool SetScrollContentExtent(HWND scrollView, ScrollExtentDip extent);
+bool SetScrollOffset(HWND scrollView, ScrollOffsetDip offset);
+std::optional<ScrollOffsetDip> GetScrollOffset(HWND scrollView);
+HWND GetScrollContentWindow(HWND scrollView);
 
 } // namespace wcw
