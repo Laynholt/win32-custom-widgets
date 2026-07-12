@@ -7,6 +7,7 @@
 
 #include <string>
 #include <optional>
+#include <vector>
 
 namespace wcw {
 
@@ -91,6 +92,28 @@ struct ImageSource {
     ImageSource(HBITMAP bitmap) : kind(Kind::Bitmap), handle(bitmap) {}
 };
 
+struct ComboItem {
+    std::wstring text;
+    std::intptr_t id{};
+    std::optional<ImageSource> image;
+};
+
+struct ComboBoxOptions : ControlOptions {
+    std::vector<ComboItem> items;
+    int selectedIndex{-1};
+    float popupHeightDip{240};
+};
+
+inline constexpr UINT WCN_SELECTION_CHANGED = 0x5703;
+
+struct SelectionChangedNotification {
+    NMHDR header;
+    int oldIndex;
+    int newIndex;
+    std::intptr_t oldId;
+    std::intptr_t newId;
+};
+
 enum class ImageMode { Contain, Cover, Stretch };
 
 HWND CreateButton(const ButtonOptions& options);
@@ -118,5 +141,9 @@ HWND CreateProgressBar(const ProgressBarOptions& options);
 bool SetProgressValue(HWND progressBar, double value);
 std::optional<double> GetProgressValue(HWND progressBar);
 bool SetProgressIndeterminate(HWND progressBar, bool indeterminate);
+HWND CreateComboBox(const ComboBoxOptions& options);
+bool SetComboItems(HWND comboBox, const std::vector<ComboItem>& items);
+bool SetComboSelection(HWND comboBox, int index);
+int GetComboSelection(HWND comboBox);
 
 } // namespace wcw
