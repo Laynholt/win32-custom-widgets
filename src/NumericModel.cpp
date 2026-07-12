@@ -63,6 +63,9 @@ NumericTextState NumericModel::SetText(std::wstring_view text) {
     if (IsIntermediate(text, mode_)) return NumericTextState::Intermediate;
     const auto narrow = NarrowAscii(text);
     if (!narrow || narrow->empty()) return NumericTextState::Invalid;
+    if (narrow->front() == '+' && narrow->size() > 1 &&
+        ((*narrow)[1] == '+' || (*narrow)[1] == '-'))
+        return NumericTextState::Invalid;
 
     double parsed{};
     const auto first = narrow->data() + (narrow->front() == '+' ? 1 : 0);

@@ -71,6 +71,7 @@ int main() {
     CHECK(integer.SetText(L"3.5") == NumericTextState::Invalid);
     CHECK(integer.SetText(L"+1") == NumericTextState::Valid);
     CHECK(integer.Value() == 1);
+    CHECK(integer.SetText(L"+-1") == NumericTextState::Invalid);
 
     NumericModel fractionalMinimum(wcw::NumericMode::Integer, .5, 10, 1, 0);
     CHECK(fractionalMinimum.Value() == 1);
@@ -82,6 +83,7 @@ int main() {
     CHECK(floating.Value() == 3.5);
     CHECK(floating.SetText(L"+1.5") == NumericTextState::Valid);
     CHECK(floating.Value() == 1.5);
+    CHECK(floating.SetText(L"+-1.5") == NumericTextState::Invalid);
     CHECK(floating.SetText(L"+") == NumericTextState::Intermediate);
     CHECK(floating.SetText(L".") == NumericTextState::Intermediate);
     CHECK(floating.SetText(L"-.") == NumericTextState::Intermediate);
