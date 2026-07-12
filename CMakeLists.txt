@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(Win32CustomWidgets LANGUAGES CXX)
 
 add_library(Win32CustomWidgets STATIC src/Theme.cpp src/Style.cpp src/Geometry.cpp
-                                      src/Runtime.cpp src/Paint.cpp src/Button.cpp src/Display.cpp
+                                      src/Runtime.cpp src/Accessibility.cpp src/Paint.cpp src/Button.cpp src/Display.cpp
                                       src/TextBox.cpp src/NumericModel.cpp src/NumericBox.cpp
                                       src/BooleanControl.cpp src/Slider.cpp src/ProgressBar.cpp
                                       src/ComboModel.cpp src/ComboBox.cpp src/ScrollModel.cpp
@@ -48,3 +48,7 @@ add_test(NAME ScrollTests COMMAND ScrollTests)
 add_executable(TooltipTests tests/test_tooltip.cpp)
 target_link_libraries(TooltipTests PRIVATE Win32CustomWidgets::Win32CustomWidgets)
 add_test(NAME TooltipTests COMMAND TooltipTests)
+
+add_executable(AccessibilityTests tests/test_accessibility.cpp)
+target_link_libraries(AccessibilityTests PRIVATE Win32CustomWidgets::Win32CustomWidgets)
+add_test(NAME AccessibilityTests COMMAND AccessibilityTests)

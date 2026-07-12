@@ -1,6 +1,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <commctrl.h>
@@ -18,6 +19,7 @@ struct RuntimeState {
     HINSTANCE instance{};
     ULONG_PTR gdiplusToken{};
     bool commonControlsInitialized{};
+    bool oleInitialized{};
     Theme theme{DarkTheme()};
     std::unordered_set<HWND> windows;
     std::unordered_map<HWND, StyleOverride> overrides;
@@ -48,15 +50,29 @@ bool Initialize(HINSTANCE instance) {
         return false;
     }
 
+    const auto ole = OleInitialize(nullptr);
+    if (FAILED(ole) && ole != RPC_E_CHANGED_MODE) return false;
+    state.oleInitialized = SUCCEEDED(ole);
+
     if (!state.commonControlsInitialized) {
         INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES};
-        if (!InitCommonControlsEx(&controls)) return false;
+        if (!InitCommonControlsEx(&controls)) {
+            if (state.oleInitialized) {
+                OleUninitialize();
+                state.oleInitialized = false;
+            }
+            return false;
+        }
         state.commonControlsInitialized = true;
     }
 
     Gdiplus::GdiplusStartupInput input;
     if (Gdiplus::GdiplusStartup(&state.gdiplusToken, &input, nullptr) != Gdiplus::Ok) {
         state.gdiplusToken = 0;
+        if (state.oleInitialized) {
+            OleUninitialize();
+            state.oleInitialized = false;
+        }
         SetLastError(ERROR_DLL_INIT_FAILED);
         return false;
     }
@@ -69,6 +85,10 @@ bool Initialize(HINSTANCE instance) {
         Gdiplus::GdiplusShutdown(state.gdiplusToken);
         state.gdiplusToken = 0;
         state.instance = nullptr;
+        if (state.oleInitialized) {
+            OleUninitialize();
+            state.oleInitialized = false;
+        }
         return false;
     }
     return true;
@@ -78,10 +98,15 @@ void Shutdown() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (!state.gdiplusToken) return;
+    internal::ShutdownAccessibility();
     paint::ClearFontCache();
     Gdiplus::GdiplusShutdown(state.gdiplusToken);
     state.gdiplusToken = 0;
     state.instance = nullptr;
+    if (state.oleInitialized) {
+        OleUninitialize();
+        state.oleInitialized = false;
+    }
     state.windows.clear();
     state.overrides.clear();
 }
@@ -152,7 +177,9 @@ StyleOverride WindowStyleOverride(HWND window) {
     return found == State().overrides.end() ? StyleOverride{} : found->second;
 }
 
-bool HandleControlMessage(HWND window, UINT message, LRESULT& result) {
+bool HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                          LRESULT& result) {
+    if (HandleAccessibilityMessage(window, message, wParam, lParam, result)) return true;
     switch (message) {
     case WM_ERASEBKGND:
         result = 1;
@@ -162,7 +189,17 @@ bool HandleControlMessage(HWND window, UINT message, LRESULT& result) {
         result = 0;
         return true;
     case WM_NCDESTROY:
+        DestroyAccessibility(window);
         UnregisterWindow(window);
+        return false;
+    case WM_SETFOCUS:
+        NotifyAccessibility(window, EVENT_OBJECT_FOCUS);
+        return false;
+    case WM_ENABLE:
+        NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
+        return false;
+    case WM_SHOWWINDOW:
+        NotifyAccessibility(window, wParam ? EVENT_OBJECT_SHOW : EVENT_OBJECT_HIDE);
         return false;
     default:
         return false;

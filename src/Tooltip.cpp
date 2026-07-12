@@ -7,6 +7,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <algorithm>
@@ -93,6 +94,8 @@ bool EnsurePopup() {
     manager.popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
                                     TooltipClass, L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr,
                                     internal::Instance(), nullptr);
+    ControlOptions accessible;
+    internal::RegisterAccessibility(manager.popup, internal::AccessibleKind::Tooltip, accessible);
     return manager.popup != nullptr;
 }
 
@@ -196,6 +199,7 @@ void ShowTooltip(HWND target) {
     if (manager.current && manager.current != target) HideTooltip();
     manager.current = target;
     manager.visibleOptions = std::move(visible);
+    SetWindowTextW(manager.popup, manager.visibleOptions.text.c_str());
     PositionPopup(target, manager.visibleOptions);
     RestartAutopopTimer();
 }
@@ -275,7 +279,7 @@ LRESULT TooltipProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     if (message == internal::ThemeChangedMessage && manager.current)
         PositionPopup(manager.current, manager.visibleOptions);
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_TIMER:
         if (wParam == ShowTimerId && manager.pending) {

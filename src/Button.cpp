@@ -3,6 +3,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <algorithm>
@@ -121,7 +122,7 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
         if (state) CancelPress(window, *state);
@@ -178,6 +179,8 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     case BM_CLICK:
         NotifyClicked(window);
         return 0;
+    case internal::ButtonGetPressedMessage:
+        return state && (state->mousePressed || state->keyboardPressedKey);
     case WM_KEYDOWN:
         if (state && IsWindowEnabled(window) &&
             (wParam == VK_SPACE || wParam == VK_RETURN || (state->isCancel && wParam == VK_ESCAPE)) &&
@@ -233,6 +236,7 @@ HWND Create(const wchar_t* className, const ButtonOptions& options) {
         SetStyleOverride(window, options.appearance);
     }
     if (window && options.isDefault) SendMessageW(options.parent, DM_SETDEFID, id, 0);
+    internal::RegisterAccessibility(window, internal::AccessibleKind::Button, options);
     return window;
 }
 

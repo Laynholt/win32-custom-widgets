@@ -8,6 +8,7 @@
 
 #include "ComboModel.h"
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <algorithm>
@@ -72,6 +73,8 @@ void NotifyChanged(HWND combo, int oldIndex, std::intptr_t oldId) {
         oldIndex, state->model.Selection(), oldId, ItemId(state->model, state->model.Selection())};
     SendMessageW(GetParent(combo), WM_NOTIFY, notification.header.idFrom,
                  reinterpret_cast<LPARAM>(&notification));
+    internal::NotifyAccessibility(combo, EVENT_OBJECT_SELECTION);
+    internal::NotifyAccessibility(combo, EVENT_OBJECT_VALUECHANGE);
 }
 
 void RemoveObservers(HWND combo, ComboState& state) {
@@ -95,6 +98,7 @@ void ClosePopup(HWND combo, bool commit, bool restoreFocus = true) {
         InvalidateRect(combo, nullptr, FALSE);
         if (restoreFocus && IsWindowEnabled(combo)) SetFocus(combo);
         if (commit) NotifyChanged(combo, oldIndex, oldId);
+        internal::NotifyAccessibility(combo, EVENT_OBJECT_STATECHANGE);
     }
 }
 
@@ -341,6 +345,7 @@ void OpenPopup(HWND combo) {
     SetFocus(state->popup);
     SetCapture(state->popup);
     InvalidateRect(combo, nullptr, FALSE);
+    internal::NotifyAccessibility(combo, EVENT_OBJECT_STATECHANGE);
 }
 
 void CommitClosedNavigation(HWND window, ComboState& state, WPARAM key) {
@@ -386,7 +391,7 @@ LRESULT ComboProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if ((message == internal::ThemeChangedMessage || message == WM_DPICHANGED) && state)
         ClosePopup(window, false);
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
         ClosePopup(window, false, false);
@@ -482,6 +487,16 @@ LRESULT ComboProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         return FALSE;
     case internal::ComboGetSelectionMessage:
         return state ? state->model.Selection() : -1;
+    case internal::ComboGetAccessibleValueMessage:
+        if (state && lParam) {
+            auto& text = *reinterpret_cast<std::wstring*>(lParam);
+            const int selected = state->model.Selection();
+            text = selected >= 0 ? state->model.Items()[selected].text : std::wstring{};
+            return TRUE;
+        }
+        return FALSE;
+    case internal::ComboGetOpenMessage:
+        return state ? reinterpret_cast<LRESULT>(state->popup) : 0;
     case WM_PAINT:
         if (state) PaintCombo(window, *state);
         return 0;
@@ -504,7 +519,7 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
         if (state && IsWindow(state->combo)) {
@@ -524,6 +539,9 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_KILLFOCUS:
         if (state) ClosePopup(state->combo, false, false);
+        return 0;
+    case WM_SETFOCUS:
+        if (state) internal::NotifyAccessibility(state->combo, EVENT_OBJECT_FOCUS);
         return 0;
     case WM_KEYDOWN:
         if (!state || !IsWindow(state->combo)) return 0;
@@ -679,6 +697,7 @@ HWND CreateComboBox(const ComboBoxOptions& options) {
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
         const_cast<ComboBoxOptions*>(&options));
     if (window) SetStyleOverride(window, options.appearance);
+    internal::RegisterAccessibility(window, internal::AccessibleKind::ComboBox, options);
     return window;
 }
 

@@ -3,6 +3,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "NumericModel.h"
 #include "Paint.h"
 
@@ -93,6 +94,7 @@ void OnEditChanged(HWND window, TextBoxState& state) {
                 NotifyValue(window, state.numeric->CommittedValue());
         }
     }
+    internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
     SendMessageW(GetParent(window), WM_COMMAND,
                  MAKEWPARAM(GetDlgCtrlID(window), EN_CHANGE), reinterpret_cast<LPARAM>(window));
     InvalidateRect(window, nullptr, FALSE);
@@ -104,6 +106,7 @@ bool StepNumeric(HWND window, TextBoxState& state, int direction) {
     state.validationError = false;
     SetEditText(state, state.numeric->Text());
     InvalidateRect(window, nullptr, FALSE);
+    internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
     NotifyValue(window, state.numeric->CommittedValue());
     return true;
 }
@@ -208,7 +211,7 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         ApplyFont(window, *state);
     }
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
 
     switch (message) {
     case WM_CREATE: {
@@ -275,8 +278,11 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         return 0;
     case internal::TextBoxSetTextMessage:
         if (state) {
+            const auto before = GetTextBoxText(window);
             SetEditText(*state, *reinterpret_cast<const std::wstring*>(lParam));
             if (state->numeric) OnEditChanged(window, *state);
+            else if (before != *reinterpret_cast<const std::wstring*>(lParam))
+                internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
             InvalidateRect(window, nullptr, FALSE);
             return TRUE;
         }
@@ -301,7 +307,10 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
             state->validationError = false;
             SetEditText(*state, state->numeric->Text());
             InvalidateRect(window, nullptr, FALSE);
-            if (changed) NotifyValue(window, state->numeric->CommittedValue());
+            if (changed) {
+                internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
+                NotifyValue(window, state->numeric->CommittedValue());
+            }
             return TRUE;
         }
         return FALSE;
@@ -353,6 +362,9 @@ HWND Create(const TextBoxOptions& options, const NumericBoxOptions* numeric) {
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(), &creation);
     if (window) SetStyleOverride(window, options.appearance);
+    internal::RegisterAccessibility(window,
+        numeric ? internal::AccessibleKind::NumericBox : internal::AccessibleKind::TextBox,
+        options, options.readOnly, options.password);
     return window;
 }
 

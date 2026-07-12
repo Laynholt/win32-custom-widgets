@@ -7,6 +7,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <algorithm>
@@ -60,6 +61,7 @@ void SetValue(HWND window, BooleanState& state, bool checked, bool notify) {
     if (state.checked == checked) return;
     state.checked = checked;
     InvalidateRect(window, nullptr, FALSE);
+    internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
     if (notify) NotifyChanged(window, checked);
 }
 
@@ -153,7 +155,7 @@ LRESULT BooleanProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     }
 
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
         if (state) CancelPress(window, *state);
@@ -262,6 +264,8 @@ HWND CreateBoolean(const wchar_t* className, const CheckableOptions& options, bo
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
         const_cast<BooleanCreate*>(&create));
     if (window) SetStyleOverride(window, options.appearance);
+    internal::RegisterAccessibility(window,
+        toggle ? internal::AccessibleKind::Toggle : internal::AccessibleKind::Checkbox, options);
     return window;
 }
 

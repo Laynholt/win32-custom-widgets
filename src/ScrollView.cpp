@@ -7,6 +7,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 #include "ScrollModel.h"
 
@@ -228,6 +229,7 @@ void PaintContent(HWND window) {
 bool SetOffsetPixels(HWND window, ScrollState& state, ScrollOffsetDip offset) {
     if (!state.model.SetOffset(offset)) return false;
     ApplyLayout(window, state);
+    internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
     return true;
 }
 
@@ -349,7 +351,7 @@ LRESULT ScrollProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
             CancelDrag(window, *state);
     }
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_CREATE:
         state->viewport = CreateWindowExW(WS_EX_CONTROLPARENT, ScrollViewportClass, L"",
@@ -494,7 +496,7 @@ LRESULT CALLBACK ViewportProc(HWND window, UINT message, WPARAM wParam, LPARAM l
 LRESULT CALLBACK ContentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_NCCREATE) internal::RegisterWindow(window);
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCHITTEST: return HTTRANSPARENT;
     case WM_PAINT: PaintContent(window); return 0;
@@ -527,6 +529,7 @@ HWND CreateScrollView(const ScrollViewOptions& options) {
         if (const auto content = GetScrollContentWindow(window))
             SetStyleOverride(content, options.appearance);
     }
+    internal::RegisterAccessibility(window, internal::AccessibleKind::ScrollView, options);
     return window;
 }
 

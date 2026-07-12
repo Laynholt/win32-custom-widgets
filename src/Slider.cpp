@@ -7,6 +7,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <algorithm>
@@ -72,6 +73,7 @@ bool SetValue(HWND window, SliderState& state, double value, bool notify, bool s
     if (normalized == state.value) return false;
     state.value = normalized;
     InvalidateRect(window, nullptr, FALSE);
+    internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
     if (notify) NotifyChanged(window, normalized);
     return true;
 }
@@ -162,7 +164,7 @@ LRESULT SliderProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
         if (GetCapture() == window) ReleaseCapture();
@@ -278,6 +280,7 @@ HWND CreateSlider(const SliderOptions& options) {
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
         const_cast<SliderOptions*>(&options));
     if (window) SetStyleOverride(window, options.appearance);
+    internal::RegisterAccessibility(window, internal::AccessibleKind::Slider, options);
     return window;
 }
 

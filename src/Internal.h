@@ -19,7 +19,8 @@ StyleOverride WindowStyleOverride(HWND window);
 FontSpec ResolveLabelFont(const Theme& theme, const StyleOverride& local);
 
 // Handles messages shared by every fully buffer-painted library control.
-bool HandleControlMessage(HWND window, UINT message, LRESULT& result);
+bool HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                          LRESULT& result);
 bool RegisterButtonClasses();
 bool RegisterDisplayClasses();
 bool RegisterTextBoxClass();
@@ -50,6 +51,10 @@ inline constexpr UINT ScrollSetExtentMessage = WM_APP + 0x581;
 inline constexpr UINT ScrollSetOffsetMessage = WM_APP + 0x582;
 inline constexpr UINT ScrollGetOffsetMessage = WM_APP + 0x583;
 inline constexpr UINT ScrollGetContentMessage = WM_APP + 0x584;
+inline constexpr UINT ComboGetAccessibleValueMessage = WM_APP + 0x585;
+inline constexpr UINT ButtonGetPressedMessage = WM_APP + 0x586;
+inline constexpr UINT ComboGetOpenMessage = WM_APP + 0x587;
+inline constexpr UINT ProgressGetIndeterminateMessage = WM_APP + 0x588;
 
 HWND CreateNumericBoxWindow(const NumericBoxOptions& options);
 bool IsTextBoxWindow(HWND window, bool numericOnly = false);

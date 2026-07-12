@@ -7,6 +7,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <commctrl.h>
@@ -120,7 +121,7 @@ LRESULT ProgressProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam
     }
 
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
         if (const auto parent = GetParent(window); parent)
@@ -150,9 +151,12 @@ LRESULT ProgressProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam
         return 0;
     case internal::ProgressSetValueMessage:
         if (state && lParam) {
-            state->value = std::clamp(*reinterpret_cast<double*>(lParam),
-                                      state->minimum, state->maximum);
+            const auto value = std::clamp(*reinterpret_cast<double*>(lParam),
+                                          state->minimum, state->maximum);
+            const bool changed = value != state->value;
+            state->value = value;
             InvalidateRect(window, nullptr, FALSE);
+            if (changed) internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
             return TRUE;
         }
         return FALSE;
@@ -164,13 +168,20 @@ LRESULT ProgressProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam
         return FALSE;
     case internal::ProgressSetIndeterminateMessage:
         if (state) {
+            const bool changed = state->indeterminate != (wParam != 0);
             state->indeterminate = wParam != 0;
             state->phase = 0;
             UpdateTimer(window, *state);
             InvalidateRect(window, nullptr, FALSE);
+            if (changed) {
+                internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
+                internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
+            }
             return TRUE;
         }
         return FALSE;
+    case internal::ProgressGetIndeterminateMessage:
+        return state && state->indeterminate;
     case WM_PAINT:
         if (state) PaintProgress(window, *state);
         return 0;
@@ -221,6 +232,7 @@ HWND CreateProgressBar(const ProgressBarOptions& options) {
         SetStyleOverride(window, options.appearance);
         SendMessageW(window, ProgressUpdateTimerMessage, 0, 0);
     }
+    internal::RegisterAccessibility(window, internal::AccessibleKind::ProgressBar, options);
     return window;
 }
 

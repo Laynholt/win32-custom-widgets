@@ -3,6 +3,7 @@
 #include <wcw/Runtime.h>
 
 #include "Internal.h"
+#include "Accessibility.h"
 #include "Paint.h"
 
 #include <algorithm>
@@ -138,7 +139,7 @@ LRESULT DisplayProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
     }
     LRESULT shared{};
-    if (internal::HandleControlMessage(window, message, shared)) return shared;
+    if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCHITTEST:
         return HTTRANSPARENT;
@@ -182,6 +183,14 @@ HWND Create(const wchar_t* className, const ControlOptions& options, DisplayStat
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(), &state);
     if (window) SetStyleOverride(window, options.appearance);
+    internal::AccessibleKind accessibleKind{};
+    switch (state.kind) {
+    case DisplayKind::Label: accessibleKind = internal::AccessibleKind::Label; break;
+    case DisplayKind::Image: accessibleKind = internal::AccessibleKind::Image; break;
+    case DisplayKind::Separator: accessibleKind = internal::AccessibleKind::Separator; break;
+    case DisplayKind::Panel: accessibleKind = internal::AccessibleKind::Panel; break;
+    }
+    internal::RegisterAccessibility(window, accessibleKind, options);
     return window;
 }
 
