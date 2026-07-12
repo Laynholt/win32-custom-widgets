@@ -466,10 +466,17 @@ LRESULT ComboProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
             ClosePopup(window, false);
             const int oldIndex = state->model.Selection();
             const auto oldId = ItemId(state->model, oldIndex);
+            const auto oldText = oldIndex >= 0 ? state->model.Items()[oldIndex].text
+                                               : std::wstring{};
             state->model.SetItems(*reinterpret_cast<const std::vector<ComboItem>*>(lParam));
             InvalidateRect(window, nullptr, FALSE);
-            if (oldIndex >= 0 && state->model.Selection() < 0)
+            const int newIndex = state->model.Selection();
+            if (oldIndex >= 0 && newIndex < 0) {
                 NotifyChanged(window, oldIndex, oldId);
+            } else if (newIndex >= 0 && oldId == ItemId(state->model, newIndex) &&
+                       oldText != state->model.Items()[newIndex].text) {
+                internal::NotifyAccessibility(window, EVENT_OBJECT_VALUECHANGE);
+            }
             return TRUE;
         }
         return FALSE;

@@ -20,6 +20,7 @@ struct RuntimeState {
     ULONG_PTR gdiplusToken{};
     bool commonControlsInitialized{};
     bool oleInitialized{};
+    DWORD uiThread{};
     Theme theme{DarkTheme()};
     std::unordered_set<HWND> windows;
     std::unordered_map<HWND, StyleOverride> overrides;
@@ -44,7 +45,12 @@ bool IsOwnedLibraryWindow(HWND window) {
 bool Initialize(HINSTANCE instance) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    if (state.gdiplusToken) return true;
+    const auto thread = GetCurrentThreadId();
+    if (state.gdiplusToken) {
+        if (state.uiThread == thread) return true;
+        SetLastError(ERROR_INVALID_THREAD_ID);
+        return false;
+    }
     if (!instance) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return false;
@@ -91,6 +97,7 @@ bool Initialize(HINSTANCE instance) {
         }
         return false;
     }
+    state.uiThread = thread;
     return true;
 }
 
@@ -98,11 +105,16 @@ void Shutdown() {
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (!state.gdiplusToken) return;
+    if (state.uiThread != GetCurrentThreadId()) {
+        SetLastError(ERROR_INVALID_THREAD_ID);
+        return;
+    }
     internal::ShutdownAccessibility();
     paint::ClearFontCache();
     Gdiplus::GdiplusShutdown(state.gdiplusToken);
     state.gdiplusToken = 0;
     state.instance = nullptr;
+    state.uiThread = 0;
     if (state.oleInitialized) {
         OleUninitialize();
         state.oleInitialized = false;
@@ -193,7 +205,7 @@ bool HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM lPara
         UnregisterWindow(window);
         return false;
     case WM_SETFOCUS:
-        NotifyAccessibility(window, EVENT_OBJECT_FOCUS);
+        NotifyAccessibilityFocus(window);
         return false;
     case WM_ENABLE:
         NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);

@@ -30,6 +30,7 @@ struct TextBoxState {
     bool validationError{};
     bool suppressChange{};
     bool readOnly{};
+    bool password{};
     std::unique_ptr<internal::NumericModel> numeric;
     HBRUSH editBrush{};
 };
@@ -82,7 +83,7 @@ void OnEditChanged(HWND window, TextBoxState& state) {
     if (length) GetWindowTextW(state.edit, text.data(), length + 1);
     text.resize(static_cast<size_t>(length));
     if (!state.numeric) {
-        SetWindowTextW(window, text.c_str());
+        if (!state.password) SetWindowTextW(window, text.c_str());
         InvalidateRect(window, nullptr, FALSE);
     } else {
         const auto before = state.numeric->CommittedValue();
@@ -150,6 +151,7 @@ LRESULT EditProcImpl(HWND edit, UINT message, WPARAM wParam, LPARAM lParam) {
     const auto outer = GetParent(edit);
     if (message == WM_SETFOCUS) {
         const auto result = DefSubclassProc(edit, message, wParam, lParam);
+        internal::NotifyAccessibilityFocus(outer, true);
         InvalidateRect(outer, nullptr, FALSE);
         return result;
     }
@@ -197,6 +199,7 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         auto created = std::make_unique<TextBoxState>();
         created->placeholder = creation->text.placeholder;
         created->readOnly = creation->text.readOnly;
+        created->password = creation->text.password;
         if (creation->numeric) {
             const auto& options = *creation->numeric;
             created->numeric = std::make_unique<internal::NumericModel>(
@@ -364,7 +367,8 @@ HWND Create(const TextBoxOptions& options, const NumericBoxOptions* numeric) {
     if (window) SetStyleOverride(window, options.appearance);
     internal::RegisterAccessibility(window,
         numeric ? internal::AccessibleKind::NumericBox : internal::AccessibleKind::TextBox,
-        options, options.readOnly, options.password);
+        options, options.readOnly, options.password,
+        options.password ? std::optional<std::wstring>(options.placeholder) : std::nullopt);
     return window;
 }
 

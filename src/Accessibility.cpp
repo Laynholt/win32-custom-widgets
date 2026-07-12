@@ -4,6 +4,7 @@
 
 #include <oleacc.h>
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <string>
@@ -15,9 +16,16 @@ namespace {
 struct Info {
     AccessibleKind kind{};
     std::wstring name;
+    std::wstring fallbackName;
     bool readOnly{};
     bool password{};
 };
+
+bool EffectivelyEnabled(HWND window) {
+    for (auto current = window; current; current = GetParent(current))
+        if (!IsWindowEnabled(current)) return false;
+    return true;
+}
 
 class Accessible final : public IAccessible {
 public:
@@ -54,29 +62,38 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE GetTypeInfoCount(UINT* count) override {
+        if (count) *count = 0;
         return Forward([&] { return standard_->GetTypeInfoCount(count); });
     }
     HRESULT STDMETHODCALLTYPE GetTypeInfo(UINT index, LCID locale, ITypeInfo** info) override {
+        if (info) *info = nullptr;
         return Forward([&] { return standard_->GetTypeInfo(index, locale, info); });
     }
     HRESULT STDMETHODCALLTYPE GetIDsOfNames(REFIID iid, LPOLESTR* names, UINT count,
                                             LCID locale, DISPID* ids) override {
+        if (ids) std::fill_n(ids, count, DISPID_UNKNOWN);
         return Forward([&] { return standard_->GetIDsOfNames(iid, names, count, locale, ids); });
     }
     HRESULT STDMETHODCALLTYPE Invoke(DISPID id, REFIID iid, LCID locale, WORD flags,
                                      DISPPARAMS* params, VARIANT* result,
                                      EXCEPINFO* exception, UINT* argument) override {
+        if (result) VariantInit(result);
+        if (exception) *exception = {};
+        if (argument) *argument = 0;
         return Forward([&] { return standard_->Invoke(id, iid, locale, flags, params, result,
                                                exception, argument); });
     }
 
     HRESULT STDMETHODCALLTYPE get_accParent(IDispatch** parent) override {
+        if (parent) *parent = nullptr;
         return Forward([&] { return standard_->get_accParent(parent); });
     }
     HRESULT STDMETHODCALLTYPE get_accChildCount(long* count) override {
+        if (count) *count = 0;
         return Forward([&] { return standard_->get_accChildCount(count); });
     }
     HRESULT STDMETHODCALLTYPE get_accChild(VARIANT child, IDispatch** result) override {
+        if (result) *result = nullptr;
         return Forward([&] { return standard_->get_accChild(child, result); });
     }
     HRESULT STDMETHODCALLTYPE get_accName(VARIANT child, BSTR* name) override {
@@ -85,7 +102,8 @@ public:
         const auto ready = SelfReady(child, name);
         if (FAILED(ready)) return ready;
         auto text = info_.name;
-        if (text.empty()) text = WindowText();
+        if (text.empty()) text = info_.fallbackName;
+        if (text.empty() && !info_.password) text = WindowText();
         *name = SysAllocStringLen(text.data(), static_cast<UINT>(text.size()));
         return *name || text.empty() ? S_OK : E_OUTOFMEMORY;
     }
@@ -124,6 +142,7 @@ public:
         return *value || text.empty() ? S_OK : E_OUTOFMEMORY;
     }
     HRESULT STDMETHODCALLTYPE get_accDescription(VARIANT child, BSTR* description) override {
+        if (description) *description = nullptr;
         return Forward([&] { return standard_->get_accDescription(child, description); });
     }
     HRESULT STDMETHODCALLTYPE get_accRole(VARIANT child, VARIANT* role) override {
@@ -156,7 +175,7 @@ public:
         const auto ready = SelfReady(child, state);
         if (FAILED(ready)) return ready;
         state->vt = VT_I4;
-        auto flags = IsWindowEnabled(window_) ? 0L : STATE_SYSTEM_UNAVAILABLE;
+        auto flags = EffectivelyEnabled(window_) ? 0L : STATE_SYSTEM_UNAVAILABLE;
         if (!IsWindowVisible(window_)) flags |= STATE_SYSTEM_INVISIBLE;
         const auto focus = GetFocus();
         if (focus == window_ || IsChild(window_, focus) ||
@@ -179,7 +198,6 @@ public:
             flags |= STATE_SYSTEM_HASPOPUP |
                      (SendMessageW(window_, ComboGetOpenMessage, 0, 0)
                           ? STATE_SYSTEM_EXPANDED : STATE_SYSTEM_COLLAPSED);
-            if (GetComboSelection(window_) >= 0) flags |= STATE_SYSTEM_SELECTED;
         }
         if (info_.readOnly) flags |= STATE_SYSTEM_READONLY;
         if (info_.password) flags |= STATE_SYSTEM_PROTECTED;
@@ -187,13 +205,17 @@ public:
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE get_accHelp(VARIANT child, BSTR* help) override {
+        if (help) *help = nullptr;
         return Forward([&] { return standard_->get_accHelp(child, help); });
     }
     HRESULT STDMETHODCALLTYPE get_accHelpTopic(BSTR* helpFile, VARIANT child,
                                                 long* topic) override {
+        if (helpFile) *helpFile = nullptr;
+        if (topic) *topic = 0;
         return Forward([&] { return standard_->get_accHelpTopic(helpFile, child, topic); });
     }
     HRESULT STDMETHODCALLTYPE get_accKeyboardShortcut(VARIANT child, BSTR* shortcut) override {
+        if (shortcut) *shortcut = nullptr;
         return Forward([&] { return standard_->get_accKeyboardShortcut(child, shortcut); });
     }
     HRESULT STDMETHODCALLTYPE get_accFocus(VARIANT* focus) override {
@@ -212,6 +234,7 @@ public:
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE get_accSelection(VARIANT* selection) override {
+        if (selection) VariantInit(selection);
         return Forward([&] { return standard_->get_accSelection(selection); });
     }
     HRESULT STDMETHODCALLTYPE get_accDefaultAction(VARIANT child, BSTR* action) override {
@@ -237,20 +260,26 @@ public:
     }
     HRESULT STDMETHODCALLTYPE accLocation(long* left, long* top, long* width, long* height,
                                           VARIANT child) override {
+        if (left) *left = 0;
+        if (top) *top = 0;
+        if (width) *width = 0;
+        if (height) *height = 0;
         return Forward([&] { return standard_->accLocation(left, top, width, height, child); });
     }
     HRESULT STDMETHODCALLTYPE accNavigate(long direction, VARIANT start,
                                           VARIANT* destination) override {
+        if (destination) VariantInit(destination);
         return Forward([&] { return standard_->accNavigate(direction, start, destination); });
     }
     HRESULT STDMETHODCALLTYPE accHitTest(long x, long y, VARIANT* child) override {
+        if (child) VariantInit(child);
         return Forward([&] { return standard_->accHitTest(x, y, child); });
     }
     HRESULT STDMETHODCALLTYPE accDoDefaultAction(VARIANT child) override {
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
         if (child.vt != VT_I4 || child.lVal != CHILDID_SELF) return E_INVALIDARG;
-        if (!IsWindowEnabled(window_)) return E_ACCESSDENIED;
+        if (!EffectivelyEnabled(window_)) return E_ACCESSDENIED;
         switch (info_.kind) {
         case AccessibleKind::Button:
             SendMessageW(window_, BM_CLICK, 0, 0);
@@ -335,8 +364,11 @@ std::unordered_map<HWND, Entry>& Entries() {
 } // namespace
 
 void RegisterAccessibility(HWND window, AccessibleKind kind, const ControlOptions& options,
-                           bool readOnly, bool password) {
-    if (window) Entries()[window] = {{kind, options.accessibleName, readOnly, password}, nullptr};
+                           bool readOnly, bool password,
+                           std::optional<std::wstring> fallbackName) {
+    if (window)
+        Entries()[window] = {{kind, options.accessibleName,
+                              fallbackName.value_or(options.text), readOnly, password}, nullptr};
 }
 
 bool HandleAccessibilityMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
@@ -370,6 +402,14 @@ void ShutdownAccessibility() {
 
 void NotifyAccessibility(HWND window, DWORD event) {
     if (IsWindow(window)) NotifyWinEvent(event, window, OBJID_CLIENT, CHILDID_SELF);
+}
+
+void NotifyAccessibilityFocus(HWND window, bool fromChild) {
+    const auto found = Entries().find(window);
+    if (found == Entries().end()) return;
+    const bool text = found->second.info.kind == AccessibleKind::TextBox ||
+                      found->second.info.kind == AccessibleKind::NumericBox;
+    if (text == fromChild) NotifyAccessibility(window, EVENT_OBJECT_FOCUS);
 }
 
 } // namespace wcw::internal

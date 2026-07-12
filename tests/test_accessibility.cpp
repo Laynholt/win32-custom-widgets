@@ -11,6 +11,23 @@
 namespace {
 
 int clicks;
+HWND watchedWindow;
+int focusEvents;
+int valueEvents;
+int selectionEvents;
+
+void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child,
+                           DWORD, DWORD) {
+    if (window != watchedWindow || object != OBJID_CLIENT || child != CHILDID_SELF) return;
+    if (event == EVENT_OBJECT_FOCUS) ++focusEvents;
+    if (event == EVENT_OBJECT_VALUECHANGE) ++valueEvents;
+    if (event == EVENT_OBJECT_SELECTION) ++selectionEvents;
+}
+
+void PumpEvents() {
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+}
 
 LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_COMMAND && HIWORD(wParam) == BN_CLICKED) ++clicks;
@@ -71,6 +88,24 @@ DWORD WINAPI ReadFromWrongThread(void* value) {
     return 0;
 }
 
+struct RuntimeThreadCheck {
+    HINSTANCE instance{};
+    bool initialized{};
+    DWORD error{};
+    DWORD shutdownError{};
+};
+
+DWORD WINAPI InitializeFromWrongThread(void* value) {
+    auto& check = *static_cast<RuntimeThreadCheck*>(value);
+    SetLastError(ERROR_SUCCESS);
+    check.initialized = wcw::Initialize(check.instance);
+    check.error = GetLastError();
+    SetLastError(ERROR_SUCCESS);
+    wcw::Shutdown();
+    check.shutdownError = GetLastError();
+    return 0;
+}
+
 } // namespace
 
 int main() {
@@ -83,6 +118,16 @@ int main() {
                                         0, 0, 600, 400, nullptr, nullptr, instance, nullptr);
     CHECK(parent != nullptr);
     CHECK(wcw::Initialize(instance));
+
+    RuntimeThreadCheck runtimeThreadCheck{instance};
+    auto thread = CreateThread(nullptr, 0, InitializeFromWrongThread, &runtimeThreadCheck, 0,
+                               nullptr);
+    CHECK(thread != nullptr);
+    CHECK(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
+    CloseHandle(thread);
+    CHECK(!runtimeThreadCheck.initialized);
+    CHECK(runtimeThreadCheck.error == ERROR_INVALID_THREAD_ID);
+    CHECK(runtimeThreadCheck.shutdownError == ERROR_INVALID_THREAD_ID);
 
     wcw::ButtonOptions buttonOptions;
     buttonOptions.parent = parent;
@@ -119,6 +164,13 @@ int main() {
     CHECK(TextProperty(accessible, &IAccessible::get_accName) == L"Visible caption");
     EnableWindow(fallbackButton, FALSE);
     CHECK((State(accessible) & STATE_SYSTEM_UNAVAILABLE) != 0);
+    EnableWindow(fallbackButton, TRUE);
+    EnableWindow(parent, FALSE);
+    CHECK((State(accessible) & STATE_SYSTEM_UNAVAILABLE) != 0);
+    const auto clicksBeforeUnavailableAction = clicks;
+    CHECK(accessible->accDoDefaultAction(Self()) == E_ACCESSDENIED);
+    CHECK(clicks == clicksBeforeUnavailableAction);
+    EnableWindow(parent, TRUE);
     accessible->Release();
 
     wcw::CheckableOptions checkOptions;
@@ -155,12 +207,34 @@ int main() {
 
     textOptions.id = 32;
     textOptions.password = true;
+    textOptions.text = L"initial-secret";
+    textOptions.placeholder = L"Password";
+    textOptions.accessibleName.clear();
     const auto password = wcw::CreateTextBox(textOptions);
     accessible = Accessible(password);
+    const auto passwordEdit = GetWindow(password, GW_CHILD);
+    CHECK(passwordEdit != nullptr);
+    SetWindowTextW(passwordEdit, L"edited-secret");
+    wchar_t outerText[64]{};
+    GetWindowTextW(password, outerText, 64);
+    CHECK(std::wstring(outerText).empty());
+    CHECK(TextProperty(accessible, &IAccessible::get_accName) == L"Password");
     BSTR protectedValue = reinterpret_cast<BSTR>(1);
     CHECK(accessible->get_accValue(Self(), &protectedValue) == S_FALSE);
     CHECK(protectedValue == nullptr);
     CHECK((State(accessible) & STATE_SYSTEM_PROTECTED) != 0);
+
+    ShowWindow(parent, SW_SHOW);
+    ShowWindow(password, SW_SHOW);
+    const auto eventHook = SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_VALUECHANGE, nullptr,
+                                           WinEventProc, GetCurrentProcessId(), GetCurrentThreadId(),
+                                           WINEVENT_OUTOFCONTEXT);
+    CHECK(eventHook != nullptr);
+    watchedWindow = password;
+    focusEvents = 0;
+    SetFocus(passwordEdit);
+    PumpEvents();
+    CHECK(focusEvents == 1);
     accessible->Release();
 
     wcw::NumericBoxOptions numericOptions;
@@ -210,6 +284,7 @@ int main() {
     const auto combo = wcw::CreateComboBox(comboOptions);
     accessible = Accessible(combo);
     CHECK(Role(accessible) == ROLE_SYSTEM_COMBOBOX);
+    CHECK((State(accessible) & STATE_SYSTEM_SELECTED) == 0);
     CHECK(TextProperty(accessible, &IAccessible::get_accValue) == L"Sorceress");
     CHECK(TextProperty(accessible, &IAccessible::get_accDefaultAction) == L"Open");
     ShowWindow(parent, SW_SHOW);
@@ -222,6 +297,17 @@ int main() {
     CHECK(comboFocus.vt == VT_I4 && comboFocus.lVal == CHILDID_SELF);
     CHECK(accessible->accDoDefaultAction(Self()) == S_OK);
     CHECK(TextProperty(accessible, &IAccessible::get_accDefaultAction) == L"Open");
+
+    watchedWindow = combo;
+    valueEvents = 0;
+    selectionEvents = 0;
+    auto replacementItems = comboOptions.items;
+    replacementItems[1].text = L"Blizzard Sorceress";
+    CHECK(wcw::SetComboItems(combo, replacementItems));
+    PumpEvents();
+    CHECK(valueEvents == 1);
+    CHECK(selectionEvents == 0);
+    CHECK(TextProperty(accessible, &IAccessible::get_accValue) == L"Blizzard Sorceress");
     accessible->Release();
 
     wcw::ScrollViewOptions scrollOptions;
@@ -238,7 +324,7 @@ int main() {
     CHECK(childCount == 1);
 
     ThreadCheck threadCheck{accessible};
-    const auto thread = CreateThread(nullptr, 0, ReadFromWrongThread, &threadCheck, 0, nullptr);
+    thread = CreateThread(nullptr, 0, ReadFromWrongThread, &threadCheck, 0, nullptr);
     CHECK(thread != nullptr);
     CHECK(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
     CloseHandle(thread);
@@ -246,9 +332,27 @@ int main() {
 
     DestroyWindow(parent);
     VARIANT deadRole;
-    VariantInit(&deadRole);
+    deadRole.vt = VT_I4;
+    deadRole.lVal = 123;
     CHECK(accessible->get_accRole(Self(), &deadRole) != S_OK);
+    CHECK(deadRole.vt == VT_EMPTY);
+    long deadChildCount = 123;
+    CHECK(accessible->get_accChildCount(&deadChildCount) == CO_E_OBJNOTCONNECTED);
+    CHECK(deadChildCount == 0);
+    IDispatch* deadParent = reinterpret_cast<IDispatch*>(1);
+    CHECK(accessible->get_accParent(&deadParent) == CO_E_OBJNOTCONNECTED);
+    CHECK(deadParent == nullptr);
+    BSTR deadDescription = reinterpret_cast<BSTR>(1);
+    CHECK(accessible->get_accDescription(Self(), &deadDescription) == CO_E_OBJNOTCONNECTED);
+    CHECK(deadDescription == nullptr);
+    VARIANT deadNavigation;
+    deadNavigation.vt = VT_I4;
+    deadNavigation.lVal = 123;
+    CHECK(accessible->accNavigate(NAVDIR_FIRSTCHILD, Self(), &deadNavigation) ==
+          CO_E_OBJNOTCONNECTED);
+    CHECK(deadNavigation.vt == VT_EMPTY);
     accessible->Release();
+    UnhookWinEvent(eventHook);
     wcw::Shutdown();
     return testFailures;
 }
