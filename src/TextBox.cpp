@@ -44,15 +44,30 @@ void RefreshBrush(HWND window, TextBoxState& state) {
         ColorRef(IsWindowEnabled(window) ? style.background : style.disabledSurface));
 }
 
+int EditLineHeight(HWND edit, const ResolvedStyle& style, unsigned dpi) {
+    int height = (std::max)(1, DipToPx(style.font.sizeDip, dpi));
+    const auto dc = GetDC(edit);
+    if (!dc) return height;
+    const auto font = reinterpret_cast<HFONT>(SendMessageW(edit, WM_GETFONT, 0, 0));
+    const auto previous = font ? SelectObject(dc, font) : nullptr;
+    TEXTMETRICW metrics{};
+    if (GetTextMetricsW(dc, &metrics)) height = metrics.tmHeight;
+    if (previous && previous != HGDI_ERROR) SelectObject(dc, previous);
+    ReleaseDC(edit, dc);
+    return height;
+}
+
 void LayoutEdit(HWND window, TextBoxState& state) {
     RECT bounds{};
     GetClientRect(window, &bounds);
     const auto style = ResolveStyle(GetTheme(), internal::WindowStyleOverride(window));
     const auto dpi = paint::Dpi(window);
     const int x = DipToPx(style.paddingXDip, dpi);
-    const int y = (std::max)(1, DipToPx(style.paddingYDip, dpi) / 2);
+    const int height = (std::min)(static_cast<int>(bounds.bottom),
+                                  EditLineHeight(state.edit, style, dpi));
+    const int y = (std::max)(0, (static_cast<int>(bounds.bottom) - height) / 2);
     MoveWindow(state.edit, x, y, (std::max)(0, static_cast<int>(bounds.right) - x * 2),
-               (std::max)(0, static_cast<int>(bounds.bottom) - y * 2), TRUE);
+               height, TRUE);
 }
 
 void ApplyFont(HWND window, TextBoxState& state) {
@@ -211,6 +226,7 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     if (message == internal::ThemeChangedMessage && state) {
         RefreshBrush(window, *state);
         ApplyFont(window, *state);
+        LayoutEdit(window, *state);
     }
     LRESULT shared{};
     if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
@@ -273,7 +289,10 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         if (state && state->edit) LayoutEdit(window, *state);
         return 0;
     case WM_SETFONT:
-        if (state) SendMessageW(state->edit, WM_SETFONT, wParam, lParam);
+        if (state) {
+            SendMessageW(state->edit, WM_SETFONT, wParam, lParam);
+            LayoutEdit(window, *state);
+        }
         return 0;
     case WM_PAINT:
         if (state) PaintTextBox(window, *state);

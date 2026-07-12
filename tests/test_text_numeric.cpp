@@ -117,6 +117,22 @@ int main() {
     CHECK(edit != nullptr);
     CHECK((GetWindowLongPtrW(edit, GWL_STYLE) & WS_BORDER) == 0);
     CHECK((GetWindowLongPtrW(edit, GWL_EXSTYLE) & WS_EX_CLIENTEDGE) == 0);
+    const auto editDc = GetDC(edit);
+    CHECK(editDc != nullptr);
+    const auto editFont = reinterpret_cast<HFONT>(SendMessageW(edit, WM_GETFONT, 0, 0));
+    const auto previousFont = editFont ? SelectObject(editDc, editFont) : nullptr;
+    TEXTMETRICW metrics{};
+    CHECK(GetTextMetricsW(editDc, &metrics) != FALSE);
+    if (previousFont && previousFont != HGDI_ERROR) SelectObject(editDc, previousFont);
+    ReleaseDC(edit, editDc);
+
+    RECT editBounds{};
+    RECT textBoxBounds{};
+    GetWindowRect(edit, &editBounds);
+    MapWindowPoints(nullptr, textBox, reinterpret_cast<POINT*>(&editBounds), 2);
+    GetClientRect(textBox, &textBoxBounds);
+    CHECK(editBounds.bottom - editBounds.top == metrics.tmHeight);
+    CHECK(std::abs(editBounds.top + editBounds.bottom - textBoxBounds.bottom) <= 1);
     CHECK(wcw::GetTextBoxText(textBox) == L"entered");
 
     ShowWindow(parent, SW_SHOWNOACTIVATE);
