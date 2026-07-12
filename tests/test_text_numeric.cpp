@@ -69,10 +69,19 @@ int main() {
     CHECK(integer.SetText(L".") == NumericTextState::Invalid);
     CHECK(integer.SetText(L"1x") == NumericTextState::Invalid);
     CHECK(integer.SetText(L"3.5") == NumericTextState::Invalid);
+    CHECK(integer.SetText(L"+1") == NumericTextState::Valid);
+    CHECK(integer.Value() == 1);
+
+    NumericModel fractionalMinimum(wcw::NumericMode::Integer, .5, 10, 1, 0);
+    CHECK(fractionalMinimum.Value() == 1);
+    NumericModel fractionalMaximum(wcw::NumericMode::Integer, -10, -.5, 1, 0);
+    CHECK(fractionalMaximum.Value() == -1);
 
     NumericModel floating(wcw::NumericMode::Floating, -100, 100, .5, 0);
     CHECK(floating.SetText(L"3.5") == NumericTextState::Valid);
     CHECK(floating.Value() == 3.5);
+    CHECK(floating.SetText(L"+1.5") == NumericTextState::Valid);
+    CHECK(floating.Value() == 1.5);
     CHECK(floating.SetText(L"+") == NumericTextState::Intermediate);
     CHECK(floating.SetText(L".") == NumericTextState::Intermediate);
     CHECK(floating.SetText(L"-.") == NumericTextState::Intermediate);
@@ -121,6 +130,46 @@ int main() {
     SetFocus(textBox);
     CHECK(GetFocus() == edit);
 
+    wcw::TextBoxOptions placeholderOptions = textOptions;
+    placeholderOptions.id = 13;
+    placeholderOptions.bounds.y = 110;
+    placeholderOptions.text.clear();
+    const auto placeholderBox = wcw::CreateTextBox(placeholderOptions);
+    const auto placeholderEdit = ChildEdit(placeholderBox);
+    ShowWindow(placeholderBox, SW_SHOWNOACTIVATE);
+    CHECK(!IsWindowVisible(placeholderEdit));
+    SetFocus(parent);
+    SendMessageW(placeholderBox, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(12, 15));
+    SendMessageW(placeholderBox, WM_LBUTTONUP, 0, MAKELPARAM(12, 15));
+    CHECK(GetFocus() == placeholderEdit);
+    CHECK(IsWindowVisible(placeholderEdit));
+    DWORD selectionStart = 1;
+    DWORD selectionEnd = 1;
+    SendMessageW(placeholderEdit, EM_GETSEL, reinterpret_cast<WPARAM>(&selectionStart),
+                 reinterpret_cast<LPARAM>(&selectionEnd));
+    CHECK(selectionStart == 0);
+    CHECK(selectionEnd == 0);
+
+    textOptions.appearance.background = wcw::Color::FromRgb(1, 2, 3);
+    textOptions.appearance.disabledSurface = wcw::Color::FromRgb(4, 5, 6);
+    CHECK(wcw::SetStyleOverride(textBox, textOptions.appearance));
+    const auto checkEditBackground = [&](COLORREF expected) {
+        const auto dc = GetDC(edit);
+        const auto brush = reinterpret_cast<HBRUSH>(
+            SendMessageW(textBox, WM_CTLCOLOREDIT, reinterpret_cast<WPARAM>(dc),
+                         reinterpret_cast<LPARAM>(edit)));
+        LOGBRUSH details{};
+        CHECK(GetObjectW(brush, sizeof(details), &details) == sizeof(details));
+        CHECK(details.lbColor == expected);
+        CHECK(GetBkColor(dc) == expected);
+        ReleaseDC(edit, dc);
+    };
+    checkEditBackground(RGB(1, 2, 3));
+    EnableWindow(textBox, FALSE);
+    checkEditBackground(RGB(4, 5, 6));
+    EnableWindow(textBox, TRUE);
+    checkEditBackground(RGB(1, 2, 3));
+
     wcw::TextBoxOptions protectedOptions = textOptions;
     protectedOptions.id = 11;
     protectedOptions.readOnly = true;
@@ -165,6 +214,21 @@ int main() {
     CHECK(wcw::GetNumericValue(numericBox) == std::optional<double>(10));
     CHECK(notifications == 4);
 
+    auto readOnlyNumericOptions = numericOptions;
+    readOnlyNumericOptions.id = 14;
+    readOnlyNumericOptions.readOnly = true;
+    readOnlyNumericOptions.value = 1;
+    const auto readOnlyNumericBox = wcw::CreateNumericBox(readOnlyNumericOptions);
+    const auto readOnlyNumericEdit = ChildEdit(readOnlyNumericBox);
+    const auto notificationsBeforeReadOnlyInput = notifications;
+    SendMessageW(readOnlyNumericEdit, WM_KEYDOWN, VK_UP, 0);
+    SendMessageW(readOnlyNumericEdit, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+    CHECK(wcw::GetNumericValue(readOnlyNumericBox) == std::optional<double>(1));
+    CHECK(notifications == notificationsBeforeReadOnlyInput);
+    CHECK(wcw::SetNumericValue(readOnlyNumericBox, 2));
+    CHECK(wcw::GetNumericValue(readOnlyNumericBox) == std::optional<double>(2));
+    CHECK(notifications == notificationsBeforeReadOnlyInput + 1);
+
     SetLastError(ERROR_SUCCESS);
     CHECK(!wcw::SetTextBoxText(parent, L"wrong type"));
     CHECK(GetLastError() == ERROR_INVALID_WINDOW_HANDLE);
@@ -182,12 +246,27 @@ int main() {
     SetLastError(ERROR_SUCCESS);
     CHECK(wcw::CreateNumericBox(invalidOptions) == nullptr);
     CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
+    invalidOptions = numericOptions;
+    invalidOptions.mode = wcw::NumericMode::Integer;
+    invalidOptions.minimum = .5;
+    SetLastError(ERROR_SUCCESS);
+    CHECK(wcw::CreateNumericBox(invalidOptions) == nullptr);
+    CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
+    invalidOptions = numericOptions;
+    invalidOptions.mode = wcw::NumericMode::Integer;
+    invalidOptions.minimum = -10;
+    invalidOptions.maximum = -.5;
+    SetLastError(ERROR_SUCCESS);
+    CHECK(wcw::CreateNumericBox(invalidOptions) == nullptr);
+    CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
     SetLastError(ERROR_SUCCESS);
     CHECK(!wcw::GetNumericValue(textBox).has_value());
     CHECK(GetLastError() == ERROR_INVALID_WINDOW_HANDLE);
 
+    DestroyWindow(readOnlyNumericBox);
     DestroyWindow(numericBox);
     DestroyWindow(protectedBox);
+    DestroyWindow(placeholderBox);
     DestroyWindow(textBox);
     wcw::Shutdown();
     DestroyWindow(parent);

@@ -31,6 +31,10 @@ NumericModel::NumericModel(NumericMode mode, double minimum, double maximum, dou
                            double value)
     : mode_(mode), minimum_((std::min)(minimum, maximum)),
       maximum_((std::max)(minimum, maximum)), step_(std::abs(step)) {
+    if (mode_ == NumericMode::Integer) {
+        minimum_ = std::ceil(minimum_);
+        maximum_ = std::floor(maximum_);
+    }
     if (!std::isfinite(step_) || step_ == 0) step_ = 1;
     Commit(value);
 }
@@ -62,7 +66,7 @@ NumericTextState NumericModel::SetText(std::wstring_view text) {
 
     double parsed{};
     const auto first = narrow->data() + (narrow->front() == '+' ? 1 : 0);
-    const auto last = first + narrow->size();
+    const auto last = narrow->data() + narrow->size();
     std::from_chars_result result;
     if (mode_ == NumericMode::Integer) {
         long long integer{};

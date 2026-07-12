@@ -10,7 +10,10 @@ HWND CreateNumericBox(const NumericBoxOptions& options) {
     if (!std::isfinite(options.minimum) || !std::isfinite(options.maximum) ||
         !std::isfinite(options.step) || !std::isfinite(options.value) || options.step <= 0 ||
         options.minimum > options.maximum ||
-        (options.mode != NumericMode::Integer && options.mode != NumericMode::Floating)) {
+        (options.mode != NumericMode::Integer && options.mode != NumericMode::Floating) ||
+        (options.mode == NumericMode::Integer &&
+         (std::trunc(options.minimum) != options.minimum ||
+          std::trunc(options.maximum) != options.maximum))) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }

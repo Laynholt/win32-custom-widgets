@@ -28,6 +28,7 @@ struct TextBoxState {
     std::wstring placeholder;
     bool validationError{};
     bool suppressChange{};
+    bool readOnly{};
     std::unique_ptr<internal::NumericModel> numeric;
     HBRUSH editBrush{};
 };
@@ -37,7 +38,8 @@ COLORREF ColorRef(Color color) { return RGB(color.r, color.g, color.b); }
 void RefreshBrush(HWND window, TextBoxState& state) {
     if (state.editBrush) DeleteObject(state.editBrush);
     const auto style = ResolveStyle(GetTheme(), internal::WindowStyleOverride(window));
-    state.editBrush = CreateSolidBrush(ColorRef(style.background));
+    state.editBrush = CreateSolidBrush(
+        ColorRef(IsWindowEnabled(window) ? style.background : style.disabledSurface));
 }
 
 void LayoutEdit(HWND window, TextBoxState& state) {
@@ -97,7 +99,7 @@ void OnEditChanged(HWND window, TextBoxState& state) {
 }
 
 bool StepNumeric(HWND window, TextBoxState& state, int direction) {
-    if (!state.numeric || !IsWindowEnabled(window) || !direction) return false;
+    if (!state.numeric || state.readOnly || !IsWindowEnabled(window) || !direction) return false;
     if (!state.numeric->Step(direction)) return true;
     state.validationError = false;
     SetEditText(state, state.numeric->Text());
@@ -191,6 +193,7 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
             reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
         auto created = std::make_unique<TextBoxState>();
         created->placeholder = creation->text.placeholder;
+        created->readOnly = creation->text.readOnly;
         if (creation->numeric) {
             const auto& options = *creation->numeric;
             created->numeric = std::make_unique<internal::NumericModel>(
@@ -233,7 +236,9 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
             const auto style = ResolveStyle(GetTheme(), internal::WindowStyleOverride(window));
             SetTextColor(reinterpret_cast<HDC>(wParam),
                          ColorRef(IsWindowEnabled(window) ? style.text : style.disabledText));
-            SetBkColor(reinterpret_cast<HDC>(wParam), ColorRef(style.background));
+            SetBkColor(reinterpret_cast<HDC>(wParam),
+                       ColorRef(IsWindowEnabled(window) ? style.background
+                                                        : style.disabledSurface));
             return reinterpret_cast<LRESULT>(state->editBrush);
         }
         break;
@@ -243,8 +248,20 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
             SetFocus(state->edit);
         }
         return 0;
+    case WM_LBUTTONDOWN:
+        if (state) {
+            ShowWindow(state->edit, SW_SHOWNA);
+            SetFocus(state->edit);
+            SendMessageW(state->edit, EM_SETSEL, 0, 0);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        return 0;
     case WM_ENABLE:
-        if (state) EnableWindow(state->edit, wParam != 0);
+        if (state) {
+            EnableWindow(state->edit, wParam != 0);
+            RefreshBrush(window, *state);
+        }
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     case WM_SIZE:
