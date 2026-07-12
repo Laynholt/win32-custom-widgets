@@ -313,8 +313,8 @@ void ScrollWheel(HWND window, ScrollState& state, int delta, bool horizontal,
     const int notches = state.model.ConsumeWheelDelta(normalizedDelta, horizontal);
     if (!notches) return;
     UINT units{3};
-    SystemParametersInfoW(nativeHorizontal ? SPI_GETWHEELSCROLLCHARS
-                                           : SPI_GETWHEELSCROLLLINES,
+    SystemParametersInfoW(horizontal ? SPI_GETWHEELSCROLLCHARS
+                                     : SPI_GETWHEELSCROLLLINES,
                           0, &units, 0);
     const float page = horizontal ? state.model.Viewport().width : state.model.Viewport().height;
     const float amount = units == WHEEL_PAGESCROLL
