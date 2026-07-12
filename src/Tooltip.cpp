@@ -325,6 +325,10 @@ bool DismissesTooltip(UINT message, WPARAM wParam) {
     case WM_RBUTTONDOWN:
     case WM_MBUTTONDOWN:
     case WM_XBUTTONDOWN:
+    case WM_NCLBUTTONDOWN:
+    case WM_NCRBUTTONDOWN:
+    case WM_NCMBUTTONDOWN:
+    case WM_NCXBUTTONDOWN:
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:
         return true;

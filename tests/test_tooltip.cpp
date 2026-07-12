@@ -184,6 +184,10 @@ int main() {
     CHECK(!IsWindowVisible(Popup()));
     SendMessageW(target, WM_MOUSEMOVE, 0, MAKELPARAM(5, 5));
     CHECK(IsWindowVisible(Popup()));
+    SendMessageW(parent, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(2, 2));
+    CHECK(!IsWindowVisible(Popup()));
+    SendMessageW(target, WM_MOUSEMOVE, 0, MAKELPARAM(5, 5));
+    CHECK(IsWindowVisible(Popup()));
     SendMessageW(parent, WM_ACTIVATEAPP, FALSE, 0);
     CHECK(!IsWindowVisible(Popup()));
     SendMessageW(target, WM_MOUSEMOVE, 0, MAKELPARAM(5, 5));
