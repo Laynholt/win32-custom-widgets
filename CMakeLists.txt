@@ -12,6 +12,11 @@ target_include_directories(Win32CustomWidgets PUBLIC include)
 target_compile_features(Win32CustomWidgets PUBLIC cxx_std_20)
 target_link_libraries(Win32CustomWidgets PUBLIC user32 gdi32 gdiplus comctl32 oleacc)
 
+add_executable(Win32CustomWidgetsDemo WIN32 demo/main.cpp)
+target_link_libraries(Win32CustomWidgetsDemo PRIVATE Win32CustomWidgets::Win32CustomWidgets)
+target_compile_definitions(Win32CustomWidgetsDemo PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+set_target_properties(Win32CustomWidgetsDemo PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 enable_testing()
 add_executable(Win32CustomWidgetsTests tests/test_theme.cpp)
 target_link_libraries(Win32CustomWidgetsTests PRIVATE Win32CustomWidgets::Win32CustomWidgets)
