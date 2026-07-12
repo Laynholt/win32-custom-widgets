@@ -15,6 +15,12 @@
 namespace {
 
 constexpr wchar_t WindowClass[] = L"WcwGalleryWindow";
+constexpr DWORD MainStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+constexpr DWORD MainExStyle = WS_EX_CONTROLPARENT;
+constexpr float InitialClientWidthDip = 960.0f;
+constexpr float InitialClientHeightDip = 620.0f;
+constexpr float MinimumClientWidthDip = 840.0f;
+constexpr float MinimumClientHeightDip = 560.0f;
 enum Id {
     Dark = 100,
     Light,
@@ -40,6 +46,13 @@ struct Gallery {
 
 int Px(HWND window, float dip) {
     return static_cast<int>(std::lround(dip * GetDpiForWindow(window) / 96.0f));
+}
+
+SIZE OuterSizeForClient(float widthDip, float heightDip, UINT dpi) {
+    RECT bounds{0, 0, static_cast<LONG>(std::lround(widthDip * dpi / 96.0f)),
+                static_cast<LONG>(std::lround(heightDip * dpi / 96.0f))};
+    AdjustWindowRectExForDpi(&bounds, MainStyle, FALSE, MainExStyle, dpi);
+    return {bounds.right - bounds.left, bounds.bottom - bounds.top};
 }
 
 void MoveWindowDip(HWND window, float x, float y, float width, float height) {
@@ -253,6 +266,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (!CreateGallery(*gallery)) return -1;
         ApplyAppearance(*gallery);
         return 0;
+    case WM_GETMINMAXINFO: {
+        const auto minimum = OuterSizeForClient(MinimumClientWidthDip, MinimumClientHeightDip,
+                                                GetDpiForWindow(window));
+        const auto info = reinterpret_cast<MINMAXINFO*>(lParam);
+        info->ptMinTrackSize = {minimum.cx, minimum.cy};
+        return 0;
+    }
     case WM_SIZE:
         if (gallery && gallery->status) Layout(*gallery);
         return 0;
@@ -328,12 +348,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
 
     Gallery gallery;
     const auto window = CreateWindowExW(
-        WS_EX_CONTROLPARENT, WindowClass, L"Win32 Custom Widgets", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1040, 720, nullptr, nullptr, instance, &gallery);
+        MainExStyle, WindowClass, L"Win32 Custom Widgets", MainStyle, CW_USEDEFAULT, CW_USEDEFAULT,
+        CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, instance, &gallery);
     if (!window) {
         wcw::Shutdown();
         return 3;
     }
+    const auto initial = OuterSizeForClient(InitialClientWidthDip, InitialClientHeightDip,
+                                            GetDpiForWindow(window));
+    SetWindowPos(window, nullptr, 0, 0, initial.cx, initial.cy,
+                 SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER);
+    Layout(gallery);
     ShowWindow(window, show);
     UpdateWindow(window);
 

@@ -12,6 +12,12 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../win32-custom-widgets" win32-cus
 target_link_libraries(MyApp PRIVATE Win32CustomWidgets::Win32CustomWidgets)
 ```
 
+This is source-only integration: there is currently no install rule, package config, or exported
+binary package. When this repository is the top-level project, `WCW_BUILD_DEMO` and CTest's
+`BUILD_TESTING` default to `ON`. As an `add_subdirectory` dependency, the demo defaults to `OFF`
+and WCW does not add its tests to the parent build. A parent may opt into the gallery with
+`-DWCW_BUILD_DEMO=ON`.
+
 Include `<wcw/Runtime.h>`, `<wcw/Theme.h>`, and `<wcw/Controls.h>`. Initialize once on the UI
 thread after entering `wWinMain`, destroy every WCW window, then shut down on that same thread:
 
@@ -71,6 +77,9 @@ cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 .\build\bin\Debug\Win32CustomWidgetsDemo.exe
 ```
+
+Use `-DWCW_BUILD_DEMO=OFF` for a library-and-tests top-level build or `-DBUILD_TESTING=OFF` for a
+library-and-demo build without tests.
 
 ## Current non-goals
 
