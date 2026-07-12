@@ -1,17 +1,19 @@
 #include "ComboModel.h"
 
 #include <algorithm>
-#include <cwctype>
+#include <windows.h>
 
 namespace wcw::internal {
 namespace {
 
 bool StartsWith(std::wstring_view text, std::wstring_view prefix) {
     return text.size() >= prefix.size() &&
-           std::equal(prefix.begin(), prefix.end(), text.begin(),
-                      [](wchar_t left, wchar_t right) {
-                          return std::towlower(left) == std::towlower(right);
-                      });
+           CompareStringOrdinal(text.data(), static_cast<int>(prefix.size()), prefix.data(),
+                                static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL;
+}
+
+bool EqualCharacter(wchar_t left, wchar_t right) {
+    return CompareStringOrdinal(&left, 1, &right, 1, TRUE) == CSTR_EQUAL;
 }
 
 } // namespace
@@ -48,11 +50,11 @@ void ComboModel::Cancel() {
     prefix_.clear();
 }
 
-bool ComboModel::Commit() {
+bool ComboModel::Commit(bool preservePrefix) {
     const bool changed = selection_ != highlighted_;
     selection_ = highlighted_;
     open_ = false;
-    prefix_.clear();
+    if (!preservePrefix) prefix_.clear();
     return changed;
 }
 
@@ -72,15 +74,16 @@ int ComboModel::End() {
 }
 
 int ComboModel::PrefixSearch(wchar_t character, std::uint64_t nowMilliseconds) {
-    if (items_.empty() || !std::iswprint(character)) return highlighted_;
-    const auto lower = static_cast<wchar_t>(std::towlower(character));
+    WORD type{};
+    if (items_.empty() || !GetStringTypeW(CT_CTYPE1, &character, 1, &type) || (type & C1_CNTRL))
+        return highlighted_;
     const bool expired = nowMilliseconds < lastPrefixMilliseconds_ ||
                          nowMilliseconds - lastPrefixMilliseconds_ > 1000;
     lastPrefixMilliseconds_ = nowMilliseconds;
 
     if (expired) prefix_.clear();
-    const bool cycle = prefix_.size() == 1 && prefix_.front() == lower;
-    if (!cycle) prefix_.push_back(lower);
+    const bool cycle = prefix_.size() == 1 && EqualCharacter(prefix_.front(), character);
+    if (!cycle) prefix_.push_back(character);
 
     const int count = static_cast<int>(items_.size());
     const int begin = cycle && highlighted_ >= 0 ? (highlighted_ + 1) % count : 0;
@@ -89,7 +92,7 @@ int ComboModel::PrefixSearch(wchar_t character, std::uint64_t nowMilliseconds) {
         if (StartsWith(items_[index].text, prefix_)) return highlighted_ = index;
     }
     if (prefix_.size() > 1) {
-        prefix_.assign(1, lower);
+        prefix_.assign(1, character);
         for (int index = 0; index < count; ++index)
             if (StartsWith(items_[index].text, prefix_)) return highlighted_ = index;
     }

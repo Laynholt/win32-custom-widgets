@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <commctrl.h>
 #include <memory>
 #include <new>
 #include <utility>
@@ -28,6 +29,7 @@ constexpr float ScrollbarWidthDip = 12.0f;
 struct ComboState {
     internal::ComboModel model;
     HWND popup{};
+    std::vector<HWND> observedAncestors;
     float popupHeightDip{240};
     bool hover{};
     bool pressed{};
@@ -39,7 +41,10 @@ struct PopupState {
     int hover{-1};
     bool draggingScrollbar{};
     float scrollbarAnchor{};
+    int wheelRemainder{};
 };
+
+LRESULT CALLBACK AncestorProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 ComboState* State(HWND combo) {
     return reinterpret_cast<ComboState*>(GetWindowLongPtrW(combo, GWLP_USERDATA));
@@ -69,12 +74,20 @@ void NotifyChanged(HWND combo, int oldIndex, std::intptr_t oldId) {
                  reinterpret_cast<LPARAM>(&notification));
 }
 
+void RemoveObservers(HWND combo, ComboState& state) {
+    const auto id = reinterpret_cast<UINT_PTR>(combo);
+    for (const auto ancestor : state.observedAncestors)
+        if (IsWindow(ancestor)) RemoveWindowSubclass(ancestor, AncestorProc, id);
+    state.observedAncestors.clear();
+}
+
 void ClosePopup(HWND combo, bool commit, bool restoreFocus = true) {
     auto* state = State(combo);
     if (!state || !state->popup) return;
     const int oldIndex = state->model.Selection();
     const auto oldId = ItemId(state->model, oldIndex);
     const auto popup = std::exchange(state->popup, nullptr);
+    RemoveObservers(combo, *state);
     if (commit) state->model.Commit(); else state->model.Cancel();
     if (GetCapture() == popup) ReleaseCapture();
     if (IsWindow(popup)) DestroyWindow(popup);
@@ -256,17 +269,14 @@ void PaintPopup(HWND window, const PopupState& popupState) {
     EndPaint(window, &ps);
 }
 
-void OpenPopup(HWND combo) {
-    auto* state = State(combo);
-    if (!state || state->popup || state->model.Items().empty() || !IsWindowEnabled(combo)) return;
-    state->model.Open();
+RECT PopupBounds(HWND combo, const ComboState& state) {
     RECT comboBounds{};
     GetWindowRect(combo, &comboBounds);
     const auto dpi = paint::Dpi(combo);
     const int rowHeight = DipToPx(RowHeightDip, dpi);
-    const int desired = std::max(rowHeight, DipToPx(state->popupHeightDip, dpi));
+    const int desired = std::max(rowHeight, DipToPx(state.popupHeightDip, dpi));
     const int height = std::min(desired,
-                                rowHeight * static_cast<int>(state->model.Items().size()));
+                                rowHeight * static_cast<int>(state.model.Items().size()));
     RECT popupBounds{comboBounds.left, comboBounds.bottom, comboBounds.right,
                      comboBounds.bottom + height};
     MONITORINFO monitor{sizeof(monitor)};
@@ -279,6 +289,41 @@ void OpenPopup(HWND combo) {
                                   std::max(monitor.rcWork.left,
                                            monitor.rcWork.right - (popupBounds.right - popupBounds.left)));
     popupBounds.right = popupBounds.left + (comboBounds.right - comboBounds.left);
+    return popupBounds;
+}
+
+void RepositionPopup(HWND combo) {
+    auto* state = State(combo);
+    if (!state || !state->popup) return;
+    if (!IsWindowVisible(combo)) {
+        ClosePopup(combo, false, false);
+        return;
+    }
+    const auto bounds = PopupBounds(combo, *state);
+    SetWindowPos(state->popup, nullptr, bounds.left, bounds.top, bounds.right - bounds.left,
+                 bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_NOZORDER);
+}
+
+LRESULT CALLBACK AncestorProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                              UINT_PTR, DWORD_PTR reference) {
+    const auto combo = reinterpret_cast<HWND>(reference);
+    if ((message == WM_SHOWWINDOW && !wParam) || (message == WM_ENABLE && !wParam) ||
+        message == WM_DESTROY || message == WM_NCDESTROY)
+        ClosePopup(combo, false, false);
+    const auto result = DefSubclassProc(window, message, wParam, lParam);
+    if ((message == WM_MOVE || message == WM_SIZE || message == WM_WINDOWPOSCHANGED) &&
+        IsWindow(combo))
+        RepositionPopup(combo);
+    return result;
+}
+
+void OpenPopup(HWND combo) {
+    auto* state = State(combo);
+    if (!state || state->popup || state->model.Items().empty() || !IsWindowEnabled(combo) ||
+        !IsWindowVisible(combo))
+        return;
+    state->model.Open();
+    const auto popupBounds = PopupBounds(combo, *state);
 
     state->popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, PopupClass, L"", WS_POPUP,
         popupBounds.left, popupBounds.top, popupBounds.right - popupBounds.left,
@@ -286,6 +331,11 @@ void OpenPopup(HWND combo) {
     if (!state->popup) {
         state->model.Cancel();
         return;
+    }
+    const auto id = reinterpret_cast<UINT_PTR>(combo);
+    for (auto ancestor = GetParent(combo); ancestor; ancestor = GetParent(ancestor)) {
+        if (SetWindowSubclass(ancestor, AncestorProc, id, reinterpret_cast<DWORD_PTR>(combo)))
+            state->observedAncestors.push_back(ancestor);
     }
     ShowWindow(state->popup, SW_SHOWNOACTIVATE);
     SetFocus(state->popup);
@@ -299,8 +349,23 @@ void CommitClosedNavigation(HWND window, ComboState& state, WPARAM key) {
     state.model.Open();
     if (key == VK_HOME) state.model.Home();
     else if (key == VK_END) state.model.End();
-    else state.model.Navigate(key == VK_UP ? -1 : 1);
+    else {
+        const int page = std::max(1, DipToPx(state.popupHeightDip, paint::Dpi(window)) /
+                                        RowHeight(window));
+        const int direction = key == VK_UP ? -1 : key == VK_PRIOR ? -page
+                              : key == VK_NEXT ? page : 1;
+        state.model.Navigate(direction);
+    }
     state.model.Commit();
+    InvalidateRect(window, nullptr, FALSE);
+    NotifyChanged(window, oldIndex, oldId);
+}
+
+void CommitClosedPrefix(HWND window, ComboState& state, wchar_t character) {
+    const int oldIndex = state.model.Selection();
+    const auto oldId = ItemId(state.model, oldIndex);
+    state.model.PrefixSearch(character, GetTickCount64());
+    state.model.Commit(true);
     InvalidateRect(window, nullptr, FALSE);
     NotifyChanged(window, oldIndex, oldId);
 }
@@ -338,6 +403,12 @@ LRESULT ComboProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         if (state && !wParam) ClosePopup(window, false, false);
         InvalidateRect(window, nullptr, FALSE);
         return 0;
+    case WM_SHOWWINDOW:
+        if (state && !wParam) ClosePopup(window, false, false);
+        return DefWindowProcW(window, message, wParam, lParam);
+    case WM_WINDOWPOSCHANGED:
+        if (state && state->popup) RepositionPopup(window);
+        return DefWindowProcW(window, message, wParam, lParam);
     case WM_MOUSEMOVE:
         if (state && !state->hover) {
             state->hover = true;
@@ -377,14 +448,23 @@ LRESULT ComboProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_KEYDOWN:
         if (!state || !IsWindowEnabled(window)) return 0;
         if (wParam == VK_F4 || wParam == VK_RETURN || wParam == VK_SPACE) OpenPopup(window);
-        else if (wParam == VK_UP || wParam == VK_DOWN || wParam == VK_HOME || wParam == VK_END)
+        else if (wParam == VK_UP || wParam == VK_DOWN || wParam == VK_HOME || wParam == VK_END ||
+                 wParam == VK_PRIOR || wParam == VK_NEXT)
             CommitClosedNavigation(window, *state, wParam);
+        return 0;
+    case WM_CHAR:
+        if (state && IsWindowEnabled(window))
+            CommitClosedPrefix(window, *state, static_cast<wchar_t>(wParam));
         return 0;
     case internal::ComboSetItemsMessage:
         if (state && lParam) {
             ClosePopup(window, false);
+            const int oldIndex = state->model.Selection();
+            const auto oldId = ItemId(state->model, oldIndex);
             state->model.SetItems(*reinterpret_cast<const std::vector<ComboItem>*>(lParam));
             InvalidateRect(window, nullptr, FALSE);
+            if (oldIndex >= 0 && state->model.Selection() < 0)
+                NotifyChanged(window, oldIndex, oldId);
             return TRUE;
         }
         return FALSE;
@@ -431,6 +511,7 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
             if (auto* comboState = State(state->combo); comboState && comboState->popup == window) {
                 comboState->popup = nullptr;
                 comboState->model.Cancel();
+                RemoveObservers(state->combo, *comboState);
             }
         }
         delete state;
@@ -446,13 +527,21 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_KEYDOWN:
         if (!state || !IsWindow(state->combo)) return 0;
-        if (wParam == VK_ESCAPE) ClosePopup(state->combo, false);
+        if (wParam == VK_TAB) {
+            const auto combo = state->combo;
+            const auto next = GetNextDlgTabItem(GetParent(combo), combo,
+                                                GetKeyState(VK_SHIFT) < 0);
+            ClosePopup(combo, false, false);
+            SetFocus(next ? next : combo);
+        } else if (wParam == VK_ESCAPE) ClosePopup(state->combo, false);
         else if (wParam == VK_RETURN) ClosePopup(state->combo, true);
         else if (auto* comboState = State(state->combo)) {
             if (wParam == VK_UP) comboState->model.Navigate(-1);
             else if (wParam == VK_DOWN) comboState->model.Navigate(1);
             else if (wParam == VK_HOME) comboState->model.Home();
             else if (wParam == VK_END) comboState->model.End();
+            else if (wParam == VK_PRIOR) comboState->model.Navigate(-VisibleRows(window));
+            else if (wParam == VK_NEXT) comboState->model.Navigate(VisibleRows(window));
             else return 0;
             EnsureVisible(window, *state);
         }
@@ -470,10 +559,21 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
             const auto* comboState = State(state->combo);
             const int maximum = std::max(0, static_cast<int>(comboState->model.Items().size()) -
                                                 VisibleRows(window));
-            state->firstVisible = std::clamp(state->firstVisible -
-                GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA * 3, 0, maximum);
-            InvalidateRect(window, nullptr, FALSE);
+            state->wheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+            const int notches = state->wheelRemainder / WHEEL_DELTA;
+            state->wheelRemainder %= WHEEL_DELTA;
+            if (notches) {
+                state->firstVisible = std::clamp(state->firstVisible - notches * 3, 0, maximum);
+                InvalidateRect(window, nullptr, FALSE);
+            }
         }
+        return 0;
+    case WM_CANCELMODE:
+        if (state) ClosePopup(state->combo, false);
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (state && reinterpret_cast<HWND>(lParam) != window)
+            ClosePopup(state->combo, false, false);
         return 0;
     case WM_MOUSEMOVE:
         if (state && IsWindow(state->combo)) {
@@ -568,7 +668,7 @@ HWND CreateComboBox(const ComboBoxOptions& options) {
         return nullptr;
     }
     if (options.selectedIndex < -1 || options.selectedIndex >= static_cast<int>(options.items.size()) ||
-        options.popupHeightDip <= 0) {
+        !std::isfinite(options.popupHeightDip) || options.popupHeightDip <= 0) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }

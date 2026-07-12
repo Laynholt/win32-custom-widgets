@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <array>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -54,6 +55,20 @@ bool HasNativeListChild(HWND popup) {
     return found;
 }
 
+struct ThreadCheck {
+    HWND combo{};
+    bool result{};
+    DWORD error{};
+};
+
+DWORD WINAPI CheckWrongThread(void* value) {
+    auto& check = *static_cast<ThreadCheck*>(value);
+    SetLastError(ERROR_SUCCESS);
+    check.result = wcw::SetComboSelection(check.combo, 0);
+    check.error = GetLastError();
+    return 0;
+}
+
 } // namespace
 
 int main() {
@@ -81,6 +96,13 @@ int main() {
     CHECK(model.Selection() == 0);
     model.SetItems({{L"Other", 40}, {L"Alpha moved", 10}});
     CHECK(model.Selection() == 1);
+    model.SetItems({{L"\u0401\u0436", 50}, {L"\u0451\u0436\u0438\u043a", 60},
+                    {L"\u042f\u0431\u043b\u043e\u043a\u043e", 70}});
+    model.SetSelection(-1);
+    model.Open();
+    CHECK(model.PrefixSearch(L'\u0451', 2000) == 0);
+    CHECK(model.PrefixSearch(L'\u0401', 2100) == 1);
+    model.Cancel();
 
     const auto instance = GetModuleHandleW(nullptr);
     const WNDCLASSW parentClass{.lpfnWndProc = ParentProc,
@@ -101,9 +123,16 @@ int main() {
     const auto combo = wcw::CreateComboBox(options);
     CHECK(combo != nullptr);
     CHECK(wcw::GetComboSelection(combo) == 0);
+    wcw::ButtonOptions nextOptions;
+    nextOptions.parent = parent;
+    nextOptions.id = 74;
+    nextOptions.bounds = {210, 10, 80, 36};
+    nextOptions.text = L"Next";
+    const auto nextControl = wcw::CreateButton(nextOptions);
 
     ShowWindow(parent, SW_SHOW);
     ShowWindow(combo, SW_SHOW);
+    ShowWindow(nextControl, SW_SHOW);
     SetFocus(combo);
     SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
     auto popup = FindPopup();
@@ -118,6 +147,13 @@ int main() {
 
     SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
     popup = FindPopup();
+    SendMessageW(popup, WM_KEYDOWN, VK_TAB, 0);
+    CHECK(FindPopup() == nullptr);
+    CHECK(GetFocus() == nextControl);
+    SetFocus(combo);
+
+    SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
+    popup = FindPopup();
     CHECK(popup != nullptr);
     SendMessageW(popup, WM_DPICHANGED, 144, 0);
     CHECK(FindPopup() == nullptr);
@@ -129,6 +165,51 @@ int main() {
     SetFocus(parent);
     CHECK(FindPopup() == nullptr);
     CHECK(GetFocus() != combo);
+
+    SetFocus(combo);
+    SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
+    popup = FindPopup();
+    RECT beforeMove{};
+    GetWindowRect(popup, &beforeMove);
+    SetWindowPos(combo, nullptr, 30, 10, 180, 36, SWP_NOZORDER | SWP_NOACTIVATE);
+    RECT afterMove{};
+    GetWindowRect(popup, &afterMove);
+    CHECK(afterMove.left - beforeMove.left == 20);
+    RECT parentBefore{};
+    GetWindowRect(parent, &parentBefore);
+    SetWindowPos(parent, nullptr, parentBefore.left + 15, parentBefore.top + 10, 320, 240,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+    RECT afterParentMove{};
+    GetWindowRect(popup, &afterParentMove);
+    CHECK(afterParentMove.left - afterMove.left == 15);
+    ShowWindow(combo, SW_HIDE);
+    CHECK(FindPopup() == nullptr);
+    ShowWindow(combo, SW_SHOW);
+    SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
+    CHECK(FindPopup() != nullptr);
+    ShowWindow(parent, SW_HIDE);
+    CHECK(FindPopup() == nullptr);
+    ShowWindow(parent, SW_SHOW);
+    ShowWindow(combo, SW_SHOW);
+    SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
+    CHECK(FindPopup() != nullptr);
+    EnableWindow(parent, FALSE);
+    CHECK(FindPopup() == nullptr);
+    EnableWindow(parent, TRUE);
+
+    SetFocus(combo);
+    SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
+    popup = FindPopup();
+    CHECK(popup != nullptr);
+    SetCapture(parent);
+    CHECK(FindPopup() == nullptr);
+    ReleaseCapture();
+    CHECK(wcw::GetComboSelection(combo) == 0);
+    SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
+    popup = FindPopup();
+    SendMessageW(popup, WM_CANCELMODE, 0, 0);
+    CHECK(FindPopup() == nullptr);
+    CHECK(wcw::GetComboSelection(combo) == 0);
 
     SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
     popup = FindPopup();
@@ -148,6 +229,16 @@ int main() {
     CHECK(wcw::SetComboSelection(combo, 1));
     CHECK(wcw::GetComboSelection(combo) == 1);
     CHECK(notifications == 2);
+    const int beforePreservedItems = notifications;
+    CHECK(wcw::SetComboItems(combo, {{L"Fourth moved", 404}, {L"Other", 999}}));
+    CHECK(wcw::GetComboSelection(combo) == 0);
+    CHECK(notifications == beforePreservedItems);
+    CHECK(wcw::SetComboItems(combo, {{L"Other", 999}}));
+    CHECK(wcw::GetComboSelection(combo) == -1);
+    CHECK(notifications == beforePreservedItems + 1);
+    CHECK(lastNotification.oldId == 404);
+    CHECK(lastNotification.newIndex == -1);
+    CHECK(wcw::SetComboSelection(combo, 0));
 
     SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
     popup = FindPopup();
@@ -184,6 +275,54 @@ int main() {
     CHECK(notifications == beforeScrollCommit + 1);
     DestroyWindow(scrollingCombo);
 
+    auto wheelOptions = scrollingOptions;
+    wheelOptions.id = 75;
+    wheelOptions.bounds.y = 155;
+    wheelOptions.selectedIndex = 0;
+    const auto wheelCombo = wcw::CreateComboBox(wheelOptions);
+    ShowWindow(wheelCombo, SW_SHOW);
+    const auto wheelAndCommitFirst = [&](int firstDelta, int secondDelta) {
+        wcw::SetComboSelection(wheelCombo, 0);
+        SendMessageW(wheelCombo, WM_KEYDOWN, VK_F4, 0);
+        const auto wheelPopup = FindPopup();
+        SendMessageW(wheelPopup, WM_MOUSEWHEEL, MAKEWPARAM(0, firstDelta), 0);
+        if (secondDelta)
+            SendMessageW(wheelPopup, WM_MOUSEWHEEL, MAKEWPARAM(0, secondDelta), 0);
+        SendMessageW(wheelPopup, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(10, 10));
+        SendMessageW(wheelPopup, WM_LBUTTONUP, 0, MAKELPARAM(10, 10));
+        return wcw::GetComboSelection(wheelCombo);
+    };
+    CHECK(wheelAndCommitFirst(-WHEEL_DELTA / 2, -WHEEL_DELTA / 2) == 3);
+    CHECK(wheelAndCommitFirst(-WHEEL_DELTA * 2, 0) == 6);
+    CHECK(wheelAndCommitFirst(0, 0) == 0);
+
+    wcw::SetComboSelection(wheelCombo, 0);
+    SendMessageW(wheelCombo, WM_KEYDOWN, VK_NEXT, 0);
+    CHECK(wcw::GetComboSelection(wheelCombo) == 2);
+    SendMessageW(wheelCombo, WM_KEYDOWN, VK_F4, 0);
+    popup = FindPopup();
+    SendMessageW(popup, WM_KEYDOWN, VK_NEXT, 0);
+    SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+    CHECK(wcw::GetComboSelection(wheelCombo) == 4);
+    DestroyWindow(wheelCombo);
+
+    auto unicodeOptions = options;
+    unicodeOptions.id = 76;
+    unicodeOptions.bounds.y = 200;
+    unicodeOptions.items = {{L"\u0401\u0436", 800}, {L"\u0451\u0436\u0438\u043a", 801},
+                            {L"\u042f\u0431\u043b\u043e\u043a\u043e", 802}};
+    unicodeOptions.selectedIndex = -1;
+    const auto unicodeCombo = wcw::CreateComboBox(unicodeOptions);
+    ShowWindow(unicodeCombo, SW_SHOW);
+    const int beforeClosedPrefix = notifications;
+    SendMessageW(unicodeCombo, WM_CHAR, L'\u0451', 0);
+    CHECK(wcw::GetComboSelection(unicodeCombo) == 0);
+    CHECK(notifications == beforeClosedPrefix + 1);
+    SendMessageW(unicodeCombo, WM_CHAR, L'\u0401', 0);
+    CHECK(wcw::GetComboSelection(unicodeCombo) == 1);
+    CHECK(notifications == beforeClosedPrefix + 2);
+    DestroyWindow(unicodeCombo);
+
     auto partialRowOptions = options;
     partialRowOptions.id = 73;
     partialRowOptions.bounds.y = 110;
@@ -203,9 +342,29 @@ int main() {
 
     SendMessageW(combo, WM_KEYDOWN, VK_F4, 0);
     CHECK(FindPopup() != nullptr);
+
+    ThreadCheck threadCheck{combo};
+    const auto thread = CreateThread(nullptr, 0, CheckWrongThread, &threadCheck, 0, nullptr);
+    CHECK(WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0);
+    CloseHandle(thread);
+    CHECK(!threadCheck.result);
+    CHECK(threadCheck.error == ERROR_INVALID_WINDOW_HANDLE);
+    SetLastError(ERROR_SUCCESS);
+    CHECK(!wcw::SetComboSelection(parent, 0));
+    CHECK(GetLastError() == ERROR_INVALID_WINDOW_HANDLE);
+    CHECK(!wcw::SetComboSelection(combo, 99));
+    auto invalidOptions = options;
+    invalidOptions.popupHeightDip = std::numeric_limits<float>::quiet_NaN();
+    SetLastError(ERROR_SUCCESS);
+    CHECK(wcw::CreateComboBox(invalidOptions) == nullptr);
+    CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
+    invalidOptions.popupHeightDip = std::numeric_limits<float>::infinity();
+    CHECK(wcw::CreateComboBox(invalidOptions) == nullptr);
+
     DestroyWindow(combo);
     CHECK(FindPopup() == nullptr);
 
+    DestroyWindow(nextControl);
     wcw::Shutdown();
     DestroyWindow(parent);
     return testFailures;

@@ -14,7 +14,7 @@ public:
     bool SetSelection(int index);
     void Open();
     void Cancel();
-    bool Commit();
+    bool Commit(bool preservePrefix = false);
     int Navigate(int direction);
     int Home();
     int End();
