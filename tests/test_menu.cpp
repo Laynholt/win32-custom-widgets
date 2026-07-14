@@ -7,6 +7,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -15,6 +16,7 @@ int commandId;
 int commandCode;
 LPARAM commandSource;
 bool popupAliveWhenCommand;
+int popupCountAtCommand;
 RECT capturedPopup{};
 
 bool SameRect(RECT left, RECT right) {
@@ -41,6 +43,7 @@ void ResetCommand() {
     commandId = commandCode = 0;
     commandSource = 0;
     popupAliveWhenCommand = false;
+    popupCountAtCommand = -1;
 }
 
 LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -49,6 +52,7 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         commandCode = HIWORD(wParam);
         commandSource = lParam;
         popupAliveWhenCommand = Popup() != nullptr;
+        popupCountAtCommand = PopupCount();
     }
     return DefWindowProcW(window, message, wParam, lParam);
 }
@@ -95,6 +99,15 @@ void CALLBACK DisableOwner(HWND owner, UINT, UINT_PTR timer, DWORD) {
     EnableWindow(owner, FALSE);
 }
 
+void CALLBACK SelectThenDisable(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+    EnableWindow(owner, FALSE);
+}
+
 void CALLBACK StealCapture(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     CHECK(Popup() != nullptr);
@@ -124,6 +137,65 @@ void CALLBACK DestroyOwner(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     CHECK(Popup() != nullptr);
     DestroyWindow(owner);
+}
+
+void CALLBACK SelectThenDestroy(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+    DestroyWindow(owner);
+}
+
+void CALLBACK QuitMenu(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    CHECK(Popup() != nullptr);
+    PostQuitMessage(73);
+}
+
+void CALLBACK SelectNestedPointer(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto root = Popup();
+    CHECK(root != nullptr);
+    SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(10, 10));
+    CHECK(PopupCount() == 2);
+    HWND child{};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM value) {
+        wchar_t name[64]{};
+        GetClassNameW(window, name, static_cast<int>(std::size(name)));
+        if (wcscmp(name, L"WcwMenuPopup") == 0 && window != GetCapture()) {
+            *reinterpret_cast<HWND*>(value) = window;
+            return FALSE;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&child));
+    CHECK(child != nullptr);
+    RECT childBounds{};
+    CHECK(GetWindowRect(child, &childBounds));
+    POINT point{childBounds.left + 10, childBounds.top + 10};
+    ScreenToClient(root, &point);
+    SendMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+}
+
+void CALLBACK SelectHiddenLast(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    CHECK(GetWindowRect(popup, &capturedPopup));
+    SendMessageW(popup, WM_KEYDOWN, VK_END, 0);
+    RECT client{};
+    CHECK(GetClientRect(popup, &client));
+    SendMessageW(popup, WM_LBUTTONUP, 0,
+                 MAKELPARAM(20, (std::max)(0L, client.bottom - 10)));
+}
+
+void CALLBACK WheelThenSelect(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_MOUSEWHEEL, MAKEWPARAM(0, -WHEEL_DELTA), 0);
+    SendMessageW(popup, WM_LBUTTONUP, 0, MAKELPARAM(20, 10));
 }
 
 void CALLBACK CapturePopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -193,6 +265,12 @@ int main() {
                    {1020, 720, 1200, 870}));
     CHECK(SameRect(wcw::internal::PlaceSubmenu({1050, 600, 1170, 648}, {240, 180}, scaledWork),
                    {810, 600, 1050, 780}));
+    CHECK(SameRect(wcw::internal::PlaceRootMenu({150, 150, 150, 150}, {500, 400},
+                                                {100, 100, 300, 250}),
+                   {100, 100, 300, 250}));
+    CHECK(SameRect(wcw::internal::PlaceSubmenu({150, 120, 180, 152}, {500, 400},
+                                               {100, 100, 300, 250}),
+                   {100, 100, 300, 250}));
 
     SetLastError(ERROR_SUCCESS);
     const wcw::ContextMenuOptions validOptions{{{.id = 1, .text = L"Item"}}};
@@ -226,6 +304,7 @@ int main() {
     CHECK(commandCode == 0);
     CHECK(commandSource == 0);
     CHECK(!popupAliveWhenCommand);
+    CHECK(popupCountAtCommand == 0);
     CHECK(Popup() == nullptr);
 
     wcw::ContextMenuOptions nested{{
@@ -236,6 +315,13 @@ int main() {
     SetTimer(parent, 2, 1, SelectNested);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, nested));
     CHECK(commandId == 103);
+    CHECK(Popup() == nullptr);
+
+    ResetCommand();
+    SetTimer(parent, 11, 1, SelectNestedPointer);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, nested));
+    CHECK(commandId == 103);
+    CHECK(popupCountAtCommand == 0);
     CHECK(Popup() == nullptr);
 
     ResetCommand();
@@ -267,16 +353,50 @@ int main() {
     EnableWindow(parent, TRUE);
 
     ResetCommand();
+    SetTimer(parent, 12, 1, SelectThenDisable);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+    CHECK(commandId == 0);
+    CHECK(Popup() == nullptr);
+    EnableWindow(parent, TRUE);
+
+    ResetCommand();
     SetTimer(parent, 8, 1, StealCapture);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
     CHECK(commandId == 0);
-    CHECK(GetCapture() == nullptr);
+    CHECK(GetCapture() == parent);
+    ReleaseCapture();
 
     ResetCommand();
     SetTimer(parent, 9, 1, DeactivateMenu);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
     CHECK(commandId == 0);
     CHECK(Popup() == nullptr);
+
+    const auto focusWindow = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE,
+                                             0, 0, 80, 24, parent, nullptr, instance, nullptr);
+    CHECK(focusWindow != nullptr);
+    ShowWindow(parent, SW_SHOW);
+    CHECK(SetFocus(focusWindow) != nullptr || GetFocus() == focusWindow);
+    SetTimer(parent, 13, 1, EscapeMenu);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+    CHECK(GetFocus() == focusWindow);
+
+    ResetCommand();
+    SetTimer(parent, 14, 1, QuitMenu);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+    CHECK(commandId == 0);
+    MSG quit{};
+    bool foundQuit{};
+    for (int checked = 0; checked < 100 && PeekMessageW(&quit, nullptr, 0, 0, PM_REMOVE); ++checked) {
+        if (quit.message == WM_QUIT) {
+            foundQuit = true;
+            break;
+        }
+        TranslateMessage(&quit);
+        DispatchMessageW(&quit);
+    }
+    CHECK(foundQuit);
+    CHECK(quit.wParam == 73);
 
     MONITORINFO monitor{sizeof(monitor)};
     POINT edge{};
@@ -290,6 +410,28 @@ int main() {
     CHECK(capturedPopup.right <= monitor.rcWork.right);
     CHECK(capturedPopup.bottom <= monitor.rcWork.bottom);
 
+    wcw::ContextMenuOptions overflow;
+    for (int index = 0; index < 100; ++index)
+        overflow.items.push_back({.id = 1000 + index,
+                                  .text = index == 0 ? std::wstring(2000, L'W')
+                                                    : L"Item " + std::to_wstring(index)});
+    capturedPopup = {};
+    ResetCommand();
+    SetTimer(parent, 15, 1, SelectHiddenLast);
+    CHECK(wcw::ShowContextMenu(parent, edge, overflow));
+    CHECK(capturedPopup.left >= monitor.rcWork.left);
+    CHECK(capturedPopup.top >= monitor.rcWork.top);
+    CHECK(capturedPopup.right <= monitor.rcWork.right);
+    CHECK(capturedPopup.bottom <= monitor.rcWork.bottom);
+    CHECK(commandId == 1099);
+    CHECK(popupCountAtCommand == 0);
+
+    ResetCommand();
+    SetTimer(parent, 17, 1, WheelThenSelect);
+    CHECK(wcw::ShowContextMenu(parent, edge, overflow));
+    CHECK(commandId == 1003);
+    CHECK(popupCountAtCommand == 0);
+
     const auto temporary = CreateWindowExW(0, parentClass.lpszClassName, L"", WS_OVERLAPPED,
                                            0, 0, 320, 240, nullptr, nullptr, instance, nullptr);
     CHECK(temporary != nullptr);
@@ -300,6 +442,17 @@ int main() {
     CHECK(commandId == 0);
     CHECK(Popup() == nullptr);
 
+    const auto selectedTemporary = CreateWindowExW(0, parentClass.lpszClassName, L"", WS_OVERLAPPED,
+                                                   0, 0, 320, 240, nullptr, nullptr, instance, nullptr);
+    CHECK(selectedTemporary != nullptr);
+    ResetCommand();
+    SetTimer(selectedTemporary, 16, 1, SelectThenDestroy);
+    CHECK(wcw::ShowContextMenu(selectedTemporary, {20, 20}, menu));
+    CHECK(!IsWindow(selectedTemporary));
+    CHECK(commandId == 0);
+    CHECK(Popup() == nullptr);
+
+    DestroyWindow(focusWindow);
     wcw::Shutdown();
     DestroyWindow(parent);
     return testFailures;

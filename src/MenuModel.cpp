@@ -17,6 +17,11 @@ RECT PopupRect(int left, int top, SIZE size) {
     return {left, top, left + size.cx, top + size.cy};
 }
 
+SIZE FitPopup(SIZE popup, RECT workArea) {
+    return {(std::min)((std::max)(0L, popup.cx), workArea.right - workArea.left),
+            (std::min)((std::max)(0L, popup.cy), workArea.bottom - workArea.top)};
+}
+
 } // namespace
 
 bool ValidMenuItems(std::span<const MenuItem> items) {
@@ -52,6 +57,7 @@ int EdgeMenuIndex(std::span<const MenuItem> items, bool end) {
 }
 
 RECT PlaceRootMenu(RECT anchor, SIZE popup, RECT workArea) {
+    popup = FitPopup(popup, workArea);
     int left = anchor.left;
     int top = anchor.bottom;
     if (top + popup.cy > workArea.bottom) top = anchor.top - popup.cy;
@@ -61,6 +67,7 @@ RECT PlaceRootMenu(RECT anchor, SIZE popup, RECT workArea) {
 }
 
 RECT PlaceSubmenu(RECT parentRow, SIZE popup, RECT workArea) {
+    popup = FitPopup(popup, workArea);
     int left = parentRow.right;
     int top = parentRow.top;
     if (left + popup.cx > workArea.right) left = parentRow.left - popup.cx;

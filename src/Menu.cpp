@@ -31,6 +31,9 @@ struct PopupLevel {
     int selected{-1};
     RECT anchor{};
     std::vector<RECT> rows;
+    int contentHeight{};
+    int scrollOffset{};
+    int wheelRemainder{};
 };
 
 struct Layout {
@@ -139,12 +142,13 @@ public:
 
     bool Run();
     int Command() const { return command_; }
+    HWND CommandTarget() const { return commandTarget_; }
     HWND Source() const { return source_; }
     void Select(size_t level, int row);
     void OpenChild(size_t level, int row, bool immediate);
     void CloseFrom(size_t level);
     void Activate(size_t level, int row);
-    void Cancel() { done_ = true; }
+    void Cancel() { command_ = 0; done_ = true; }
 
 private:
     bool CreateLevel(const std::vector<MenuItem>& items, RECT anchor, bool root);
@@ -153,7 +157,9 @@ private:
     size_t LevelIndex(HWND window) const;
     void MouseMove(HWND window, LPARAM lParam);
     void MouseUp(HWND window, LPARAM lParam);
+    void MouseWheel(HWND window, WPARAM wParam, LPARAM lParam);
     void KeyDown(WPARAM key);
+    void EnsureVisible(size_t level, int row);
     void StopChildTimer();
     void ChildTimerElapsed();
     void WindowDestroyed(HWND window);
@@ -193,23 +199,28 @@ bool PopupController::CreateLevel(const std::vector<MenuItem>& items, RECT ancho
 
     const auto colors = MenuColors(appearance_);
     const auto layout = MeasureLayout(raw->window, items, colors.style);
+    MONITORINFO monitor{sizeof(monitor)};
+    GetMonitorInfoW(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST), &monitor);
+    const SIZE desired{layout.width, layout.height};
+    const auto bounds = root ? internal::PlaceRootMenu(anchor, desired, monitor.rcWork)
+                             : internal::PlaceSubmenu(anchor, desired, monitor.rcWork);
+    const int width = bounds.right - bounds.left;
+    raw->contentHeight = layout.height;
     raw->rows.reserve(items.size());
     int top = layout.paddingY;
     for (const auto& item : items) {
         const int height = DipToPx(item.separator ? SeparatorHeightDip : RowHeightDip,
                                    paint::Dpi(raw->window));
-        raw->rows.push_back({0, top, layout.width, top + height});
+        raw->rows.push_back({0, top, width, top + height});
         top += height;
     }
 
-    MONITORINFO monitor{sizeof(monitor)};
-    GetMonitorInfoW(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST), &monitor);
-    const SIZE size{layout.width, layout.height};
-    const auto bounds = root ? internal::PlaceRootMenu(anchor, size, monitor.rcWork)
-                             : internal::PlaceSubmenu(anchor, size, monitor.rcWork);
-    SetWindowPos(raw->window, HWND_TOPMOST, bounds.left, bounds.top,
-                 bounds.right - bounds.left, bounds.bottom - bounds.top,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (!SetWindowPos(raw->window, HWND_TOPMOST, bounds.left, bounds.top, width,
+                      bounds.bottom - bounds.top, SWP_NOACTIVATE | SWP_SHOWWINDOW)) {
+        DestroyWindow(raw->window);
+        levels_.pop_back();
+        return false;
+    }
     return true;
 }
 
@@ -238,16 +249,16 @@ bool PopupController::Run() {
         shown_ = true;
         SetFocus(levels_.front()->window);
         SetCapture(levels_.front()->window);
-        if (GetCapture() != levels_.front()->window) done_ = true;
+        if (GetCapture() != levels_.front()->window) Cancel();
     } else {
-        done_ = true;
+        Cancel();
     }
 
     MSG message{};
     while (!done_) {
         const auto result = GetMessageW(&message, nullptr, 0, 0);
         if (result <= 0) {
-            done_ = true;
+            Cancel();
             if (result == 0) PostQuitMessage(static_cast<int>(message.wParam));
             break;
         }
@@ -257,9 +268,14 @@ bool PopupController::Run() {
 
     if (!levels_.empty() && levels_.front()->window)
         KillTimer(levels_.front()->window, ChildTimer);
+    const auto root = levels_.empty() ? nullptr : levels_.front()->window;
+    const auto replacementCapture = GetCapture();
+    if (replacementCapture == root) ReleaseCapture();
     CloseFrom(0);
     if (IsWindow(commandTarget_)) RemoveWindowSubclass(commandTarget_, OwnerProc, subclassId);
-    if (GetCapture()) ReleaseCapture();
+    if (replacementCapture && replacementCapture != root && IsWindow(replacementCapture) &&
+        GetCapture() != replacementCapture)
+        SetCapture(replacementCapture);
     if (IsWindow(previousFocus_)) SetFocus(previousFocus_);
     activeController = nullptr;
     return shown_;
@@ -271,10 +287,14 @@ void PopupController::Select(size_t level, int row) {
     if (row < 0 || row >= static_cast<int>(current.items->size())) return;
     const auto& item = (*current.items)[row];
     if (!item.enabled || item.separator) return;
-    if (current.selected == row) return;
+    if (current.selected == row) {
+        EnsureVisible(level, row);
+        return;
+    }
     current.selected = row;
     StopChildTimer();
     CloseFrom(level + 1);
+    EnsureVisible(level, row);
     InvalidateRect(current.window, nullptr, FALSE);
 }
 
@@ -298,7 +318,8 @@ void PopupController::OpenChild(size_t level, int row, bool immediate) {
     RECT parentBounds{};
     GetWindowRect(levels_[level]->window, &parentBounds);
     auto rowBounds = levels_[level]->rows[row];
-    OffsetRect(&rowBounds, parentBounds.left, parentBounds.top);
+    OffsetRect(&rowBounds, parentBounds.left,
+               parentBounds.top - levels_[level]->scrollOffset);
     CreateLevel(item.children, rowBounds, false);
 }
 
@@ -333,7 +354,8 @@ std::pair<size_t, int> PopupController::HitTest(POINT screen) const {
             continue;
         for (int row = 0; row < static_cast<int>(levels_[level]->rows.size()); ++row) {
             auto rowBounds = levels_[level]->rows[row];
-            OffsetRect(&rowBounds, bounds.left, bounds.top);
+            OffsetRect(&rowBounds, bounds.left,
+                       bounds.top - levels_[level]->scrollOffset);
             if (Contains(rowBounds, screen)) return {level, row};
         }
         return {level, -1};
@@ -382,6 +404,29 @@ void PopupController::MouseUp(HWND window, LPARAM lParam) {
     else if (!InsideChain(point)) Cancel();
 }
 
+void PopupController::MouseWheel(HWND window, WPARAM wParam, LPARAM lParam) {
+    if (levels_.empty()) return;
+    const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+    auto [level, row] = HitTest(point);
+    if (level == static_cast<size_t>(-1)) level = LevelIndex(window);
+    if (level == static_cast<size_t>(-1)) level = levels_.size() - 1;
+
+    auto& current = *levels_[level];
+    current.wheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+    const int steps = current.wheelRemainder / WHEEL_DELTA;
+    current.wheelRemainder %= WHEEL_DELTA;
+    if (!steps) return;
+    RECT client{};
+    GetClientRect(current.window, &client);
+    const int maximum = (std::max)(0, current.contentHeight - static_cast<int>(client.bottom));
+    const int rowHeight = DipToPx(RowHeightDip, paint::Dpi(current.window));
+    const int offset = std::clamp(current.scrollOffset - steps * rowHeight * 3, 0, maximum);
+    if (offset == current.scrollOffset) return;
+    current.scrollOffset = offset;
+    CloseFrom(level + 1);
+    InvalidateRect(current.window, nullptr, FALSE);
+}
+
 void PopupController::KeyDown(WPARAM key) {
     if (levels_.empty()) return;
     const size_t level = levels_.size() - 1;
@@ -410,6 +455,23 @@ void PopupController::KeyDown(WPARAM key) {
         Cancel();
         break;
     }
+}
+
+void PopupController::EnsureVisible(size_t level, int row) {
+    if (level >= levels_.size() || row < 0 || row >= static_cast<int>(levels_[level]->rows.size()))
+        return;
+    auto& current = *levels_[level];
+    RECT client{};
+    GetClientRect(current.window, &client);
+    int offset = current.scrollOffset;
+    if (current.rows[row].top < offset) offset = current.rows[row].top;
+    else if (current.rows[row].bottom > offset + client.bottom)
+        offset = current.rows[row].bottom - client.bottom;
+    offset = std::clamp(offset, 0,
+                        (std::max)(0, current.contentHeight - static_cast<int>(client.bottom)));
+    if (offset == current.scrollOffset) return;
+    current.scrollOffset = offset;
+    InvalidateRect(current.window, nullptr, FALSE);
 }
 
 void PopupController::StopChildTimer() {
@@ -488,7 +550,9 @@ void PopupController::Paint(HWND window) {
             const auto penWidth = (std::max)(1.5f, paint::ToPixels(style.borderWidthDip, dpi));
             for (int row = 0; row < static_cast<int>(levels_[levelIndex]->items->size()); ++row) {
                 const auto& item = (*levels_[levelIndex]->items)[row];
-                const auto rowBounds = levels_[levelIndex]->rows[row];
+                auto rowBounds = levels_[levelIndex]->rows[row];
+                OffsetRect(&rowBounds, 0, -levels_[levelIndex]->scrollOffset);
+                if (rowBounds.bottom <= bounds.top || rowBounds.top >= bounds.bottom) continue;
                 if (item.separator) {
                     const int y = (rowBounds.top + rowBounds.bottom) / 2;
                     Gdiplus::Pen pen(paint::GdiPlusColor(style.border), penWidth);
@@ -518,16 +582,27 @@ void PopupController::Paint(HWND window) {
                 else if (item.image.kind != ImageSource::Kind::None)
                     paint::Image(buffer.dc(), item.image, imageBounds, textColor);
                 x += layout.imageWidth + layout.spacing;
-                RECT labelBounds{x, rowBounds.top, x + layout.labelWidth, rowBounds.bottom};
+                const int right = (std::max)(x, static_cast<int>(bounds.right) - layout.paddingX);
+                const int chevronBlock = layout.chevronWidth
+                                               ? layout.spacing + layout.chevronWidth : 0;
+                const int afterChevron = (std::max)(0, right - x - chevronBlock);
+                const int shortcutWidth = layout.shortcutWidth
+                                              ? (std::min)(layout.shortcutWidth, afterChevron / 2)
+                                              : 0;
+                const int shortcutBlock = shortcutWidth ? layout.spacing + shortcutWidth : 0;
+                const int labelWidth = (std::min)(layout.labelWidth,
+                                                  (std::max)(0, afterChevron - shortcutBlock));
+                RECT labelBounds{x, rowBounds.top, x + labelWidth, rowBounds.bottom};
                 paint::Text(buffer.dc(), item.text, labelBounds, font, textColor,
                             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-                x += layout.labelWidth;
-                if (layout.shortcutWidth) {
+                x += labelWidth;
+                if (shortcutWidth) {
                     x += layout.spacing;
-                    RECT shortcutBounds{x, rowBounds.top, x + layout.shortcutWidth, rowBounds.bottom};
+                    RECT shortcutBounds{x, rowBounds.top, x + shortcutWidth, rowBounds.bottom};
                     paint::Text(buffer.dc(), item.shortcut, shortcutBounds, font, mutedColor,
-                                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-                    x += layout.shortcutWidth;
+                                DT_RIGHT | DT_VCENTER | DT_SINGLELINE |
+                                    DT_END_ELLIPSIS | DT_NOPREFIX);
+                    x += shortcutWidth;
                 }
                 if (layout.chevronWidth) {
                     x += layout.spacing;
@@ -555,6 +630,9 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONUP:
         if (controller) controller->MouseUp(window, lParam);
         return 0;
+    case WM_MOUSEWHEEL:
+        if (controller) controller->MouseWheel(window, wParam, lParam);
+        return 0;
     case WM_KEYDOWN:
         if (controller) controller->KeyDown(wParam);
         return 0;
@@ -568,7 +646,7 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_ACTIVATEAPP:
     case WM_ENABLE:
-        if (controller && !wParam) controller->Cancel();
+        if (controller && !controller->done_ && !wParam) controller->Cancel();
         return 0;
     case WM_PAINT:
         if (controller) controller->Paint(window);
@@ -630,8 +708,9 @@ bool ShowPopupMenu(HWND commandTarget, HWND source, RECT anchor,
                    std::vector<MenuItem> items, const StyleOverride& appearance) {
     PopupController controller(commandTarget, source, anchor, std::move(items), appearance);
     const bool shown = controller.Run();
-    if (shown && controller.Command() && IsWindow(commandTarget))
-        SendMessageW(commandTarget, WM_COMMAND, MAKEWPARAM(controller.Command(), 0),
+    const auto target = controller.CommandTarget();
+    if (shown && controller.Command() && target && IsWindow(target))
+        SendMessageW(target, WM_COMMAND, MAKEWPARAM(controller.Command(), 0),
                      reinterpret_cast<LPARAM>(source));
     return shown;
 }
