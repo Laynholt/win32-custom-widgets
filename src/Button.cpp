@@ -45,10 +45,12 @@ void ActivateButton(HWND window, ButtonState& state) {
         GetWindowRect(window, &anchor);
         state.menuOpen = true;
         InvalidateRect(window, nullptr, FALSE);
+        internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
         internal::ShowPopupMenu(GetParent(window), window, anchor, state.menuItems,
                                 state.menuAppearance);
         state.menuOpen = false;
         InvalidateRect(window, nullptr, FALSE);
+        internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
         return;
     }
     SendMessageW(GetParent(window), WM_COMMAND,

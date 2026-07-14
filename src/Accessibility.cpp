@@ -19,6 +19,8 @@ struct Info {
     std::wstring fallbackName;
     bool readOnly{};
     bool password{};
+    std::vector<AccessibleMenuItem> menuItems;
+    int focusedChild{};
 };
 
 bool EffectivelyEnabled(HWND window) {
@@ -41,6 +43,11 @@ public:
             standard_->Release();
             standard_ = nullptr;
         }
+    }
+
+    void UpdateMenu(std::vector<AccessibleMenuItem> items, int focusedChild) {
+        info_.menuItems = std::move(items);
+        info_.focusedChild = focusedChild;
     }
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** value) override {
@@ -90,17 +97,34 @@ public:
     }
     HRESULT STDMETHODCALLTYPE get_accChildCount(long* count) override {
         if (count) *count = 0;
-        return Forward([&] { return standard_->get_accChildCount(count); });
+        if (info_.kind != AccessibleKind::Menu)
+            return Forward([&] { return standard_->get_accChildCount(count); });
+        const auto ready = Ready();
+        if (FAILED(ready)) return ready;
+        if (!count) return E_POINTER;
+        *count = static_cast<long>(info_.menuItems.size());
+        return S_OK;
     }
     HRESULT STDMETHODCALLTYPE get_accChild(VARIANT child, IDispatch** result) override {
         if (result) *result = nullptr;
-        return Forward([&] { return standard_->get_accChild(child, result); });
+        if (info_.kind != AccessibleKind::Menu)
+            return Forward([&] { return standard_->get_accChild(child, result); });
+        const auto ready = Ready();
+        if (FAILED(ready)) return ready;
+        if (!result) return E_POINTER;
+        return MenuItem(child) ? S_FALSE : E_INVALIDARG;
     }
     HRESULT STDMETHODCALLTYPE get_accName(VARIANT child, BSTR* name) override {
         if (!name) return E_POINTER;
         *name = nullptr;
-        const auto ready = SelfReady(child, name);
+        const auto ready = Ready();
         if (FAILED(ready)) return ready;
+        if (const auto* item = MenuItem(child)) {
+            *name = SysAllocStringLen(item->text.data(), static_cast<UINT>(item->text.size()));
+            return *name || item->text.empty() ? S_OK : E_OUTOFMEMORY;
+        }
+        const auto selfReady = SelfReady(child, name);
+        if (FAILED(selfReady)) return selfReady;
         auto text = info_.name;
         if (text.empty()) text = info_.fallbackName;
         if (text.empty() && !info_.password) text = WindowText();
@@ -148,8 +172,15 @@ public:
     HRESULT STDMETHODCALLTYPE get_accRole(VARIANT child, VARIANT* role) override {
         if (!role) return E_POINTER;
         VariantInit(role);
-        const auto ready = SelfReady(child, role);
+        const auto ready = Ready();
         if (FAILED(ready)) return ready;
+        if (MenuItem(child)) {
+            role->vt = VT_I4;
+            role->lVal = ROLE_SYSTEM_MENUITEM;
+            return S_OK;
+        }
+        const auto selfReady = SelfReady(child, role);
+        if (FAILED(selfReady)) return selfReady;
         role->vt = VT_I4;
         switch (info_.kind) {
         case AccessibleKind::Button: role->lVal = ROLE_SYSTEM_PUSHBUTTON; break;
@@ -166,14 +197,26 @@ public:
         case AccessibleKind::Separator: role->lVal = ROLE_SYSTEM_SEPARATOR; break;
         case AccessibleKind::Panel: role->lVal = ROLE_SYSTEM_GROUPING; break;
         case AccessibleKind::Tooltip: role->lVal = ROLE_SYSTEM_TOOLTIP; break;
+        case AccessibleKind::Menu: role->lVal = ROLE_SYSTEM_MENUPOPUP; break;
         }
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE get_accState(VARIANT child, VARIANT* state) override {
         if (!state) return E_POINTER;
         VariantInit(state);
-        const auto ready = SelfReady(child, state);
+        const auto ready = Ready();
         if (FAILED(ready)) return ready;
+        if (const auto* item = MenuItem(child)) {
+            state->vt = VT_I4;
+            auto flags = item->enabled ? STATE_SYSTEM_FOCUSABLE : STATE_SYSTEM_UNAVAILABLE;
+            if (item->checked) flags |= STATE_SYSTEM_CHECKED;
+            if (item->hasPopup) flags |= STATE_SYSTEM_HASPOPUP;
+            if (child.lVal == info_.focusedChild) flags |= STATE_SYSTEM_FOCUSED;
+            state->lVal = flags;
+            return S_OK;
+        }
+        const auto selfReady = SelfReady(child, state);
+        if (FAILED(selfReady)) return selfReady;
         state->vt = VT_I4;
         auto flags = EffectivelyEnabled(window_) ? 0L : STATE_SYSTEM_UNAVAILABLE;
         if (!IsWindowVisible(window_)) flags |= STATE_SYSTEM_INVISIBLE;
@@ -194,6 +237,12 @@ public:
         if (info_.kind == AccessibleKind::Button &&
             SendMessageW(window_, ButtonGetPressedMessage, 0, 0))
             flags |= STATE_SYSTEM_PRESSED;
+        if (info_.kind == AccessibleKind::Button) {
+            const auto menu = SendMessageW(window_, ButtonGetMenuStateMessage, 0, 0);
+            if (menu & 1)
+                flags |= STATE_SYSTEM_HASPOPUP |
+                         (menu & 2 ? STATE_SYSTEM_EXPANDED : STATE_SYSTEM_COLLAPSED);
+        }
         if (info_.kind == AccessibleKind::ComboBox) {
             flags |= STATE_SYSTEM_HASPOPUP |
                      (SendMessageW(window_, ComboGetOpenMessage, 0, 0)
@@ -223,6 +272,11 @@ public:
         VariantInit(focus);
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
+        if (info_.kind == AccessibleKind::Menu && info_.focusedChild > 0) {
+            focus->vt = VT_I4;
+            focus->lVal = info_.focusedChild;
+            return S_OK;
+        }
         const auto focusWindow = GetFocus();
         if (focusWindow == window_ || IsChild(window_, focusWindow) ||
             (info_.kind == AccessibleKind::ComboBox &&
@@ -240,11 +294,21 @@ public:
     HRESULT STDMETHODCALLTYPE get_accDefaultAction(VARIANT child, BSTR* action) override {
         if (!action) return E_POINTER;
         *action = nullptr;
-        const auto ready = SelfReady(child, action);
+        const auto ready = Ready();
         if (FAILED(ready)) return ready;
+        if (MenuItem(child)) {
+            *action = SysAllocString(L"Execute");
+            return *action ? S_OK : E_OUTOFMEMORY;
+        }
+        const auto selfReady = SelfReady(child, action);
+        if (FAILED(selfReady)) return selfReady;
         const wchar_t* text{};
         switch (info_.kind) {
-        case AccessibleKind::Button: text = L"Press"; break;
+        case AccessibleKind::Button: {
+            const auto menu = SendMessageW(window_, ButtonGetMenuStateMessage, 0, 0);
+            text = menu & 1 ? (menu & 2 ? L"Close" : L"Open") : L"Press";
+            break;
+        }
         case AccessibleKind::Checkbox:
         case AccessibleKind::Toggle: text = GetChecked(window_) ? L"Uncheck" : L"Check"; break;
         case AccessibleKind::ComboBox:
@@ -264,12 +328,44 @@ public:
         if (top) *top = 0;
         if (width) *width = 0;
         if (height) *height = 0;
+        const auto ready = Ready();
+        if (FAILED(ready)) return ready;
+        if (const auto* item = MenuItem(child)) {
+            if (!left || !top || !width || !height) return E_POINTER;
+            *left = item->screenBounds.left;
+            *top = item->screenBounds.top;
+            *width = item->screenBounds.right - item->screenBounds.left;
+            *height = item->screenBounds.bottom - item->screenBounds.top;
+            return S_OK;
+        }
         return Forward([&] { return standard_->accLocation(left, top, width, height, child); });
     }
     HRESULT STDMETHODCALLTYPE accNavigate(long direction, VARIANT start,
                                           VARIANT* destination) override {
         if (destination) VariantInit(destination);
-        return Forward([&] { return standard_->accNavigate(direction, start, destination); });
+        if (info_.kind != AccessibleKind::Menu)
+            return Forward([&] { return standard_->accNavigate(direction, start, destination); });
+        const auto ready = Ready();
+        if (FAILED(ready)) return ready;
+        if (!destination) return E_POINTER;
+        if (start.vt != VT_I4) return E_INVALIDARG;
+        long child{};
+        if (start.lVal == CHILDID_SELF && direction == NAVDIR_FIRSTCHILD &&
+            !info_.menuItems.empty())
+            child = 1;
+        else if (start.lVal == CHILDID_SELF && direction == NAVDIR_LASTCHILD &&
+                 !info_.menuItems.empty())
+            child = static_cast<long>(info_.menuItems.size());
+        else if (MenuItem(start) && (direction == NAVDIR_NEXT || direction == NAVDIR_DOWN) &&
+                 start.lVal < static_cast<long>(info_.menuItems.size()))
+            child = start.lVal + 1;
+        else if (MenuItem(start) &&
+                 (direction == NAVDIR_PREVIOUS || direction == NAVDIR_UP) && start.lVal > 1)
+            child = start.lVal - 1;
+        if (!child) return S_FALSE;
+        destination->vt = VT_I4;
+        destination->lVal = child;
+        return S_OK;
     }
     HRESULT STDMETHODCALLTYPE accHitTest(long x, long y, VARIANT* child) override {
         if (child) VariantInit(child);
@@ -278,6 +374,11 @@ public:
     HRESULT STDMETHODCALLTYPE accDoDefaultAction(VARIANT child) override {
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
+        if (const auto* item = MenuItem(child)) {
+            if (!item->enabled) return E_ACCESSDENIED;
+            SendMessageW(window_, MenuActivateAccessibleMessage, item->row, 0);
+            return S_OK;
+        }
         if (child.vt != VT_I4 || child.lVal != CHILDID_SELF) return E_INVALIDARG;
         if (!EffectivelyEnabled(window_)) return E_ACCESSDENIED;
         switch (info_.kind) {
@@ -319,6 +420,13 @@ private:
         if (FAILED(ready)) return ready;
         if (!output) return E_POINTER;
         return child.vt == VT_I4 && child.lVal == CHILDID_SELF ? S_OK : E_INVALIDARG;
+    }
+
+    const AccessibleMenuItem* MenuItem(const VARIANT& child) const {
+        if (info_.kind != AccessibleKind::Menu || child.vt != VT_I4 || child.lVal <= 0 ||
+            child.lVal > static_cast<long>(info_.menuItems.size()))
+            return nullptr;
+        return &info_.menuItems[static_cast<size_t>(child.lVal - 1)];
     }
 
     template <class Function>
@@ -371,6 +479,22 @@ void RegisterAccessibility(HWND window, AccessibleKind kind, const ControlOption
                               fallbackName.value_or(options.text), readOnly, password}, nullptr};
 }
 
+void RegisterMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items) {
+    if (window)
+        Entries()[window] = {{AccessibleKind::Menu, {}, {}, false, false, std::move(items)},
+                             nullptr};
+}
+
+void UpdateMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items,
+                             int focusedChild) {
+    const auto found = Entries().find(window);
+    if (found == Entries().end() || found->second.info.kind != AccessibleKind::Menu) return;
+    found->second.info.menuItems = items;
+    found->second.info.focusedChild = focusedChild;
+    if (found->second.object)
+        found->second.object->UpdateMenu(std::move(items), focusedChild);
+}
+
 bool HandleAccessibilityMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                                 LRESULT& result) {
     if (message != WM_GETOBJECT || static_cast<LONG>(lParam) != OBJID_CLIENT) return false;
@@ -400,8 +524,8 @@ void ShutdownAccessibility() {
     while (!Entries().empty()) DestroyAccessibility(Entries().begin()->first);
 }
 
-void NotifyAccessibility(HWND window, DWORD event) {
-    if (IsWindow(window)) NotifyWinEvent(event, window, OBJID_CLIENT, CHILDID_SELF);
+void NotifyAccessibility(HWND window, DWORD event, LONG child) {
+    if (IsWindow(window)) NotifyWinEvent(event, window, OBJID_CLIENT, child);
 }
 
 void NotifyAccessibilityFocus(HWND window, bool fromChild) {

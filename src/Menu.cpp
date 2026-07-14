@@ -133,6 +133,26 @@ bool Contains(RECT rect, POINT point) {
            point.y >= rect.top && point.y < rect.bottom;
 }
 
+std::vector<internal::AccessibleMenuItem> AccessibleItems(const PopupLevel& level,
+                                                          int& focusedChild) {
+    std::vector<internal::AccessibleMenuItem> accessible;
+    RECT bounds{};
+    GetWindowRect(level.window, &bounds);
+    focusedChild = 0;
+    int child{};
+    for (int row = 0; row < static_cast<int>(level.items->size()); ++row) {
+        const auto& item = (*level.items)[row];
+        if (item.separator) continue;
+        ++child;
+        auto screenBounds = level.rows[row];
+        OffsetRect(&screenBounds, bounds.left, bounds.top - level.scrollOffset);
+        accessible.push_back({item.text, screenBounds, row, item.enabled, item.checked,
+                              !item.children.empty()});
+        if (row == level.selected) focusedChild = child;
+    }
+    return accessible;
+}
+
 class PopupController {
 public:
     PopupController(HWND commandTarget, HWND source, RECT anchor,
@@ -163,6 +183,7 @@ private:
     void StopChildTimer();
     void ChildTimerElapsed();
     void WindowDestroyed(HWND window);
+    int UpdateAccessibility(size_t level);
     void Paint(HWND window);
 
     friend LRESULT PopupProcImpl(HWND, UINT, WPARAM, LPARAM);
@@ -221,6 +242,8 @@ bool PopupController::CreateLevel(const std::vector<MenuItem>& items, RECT ancho
         levels_.pop_back();
         return false;
     }
+    int focusedChild{};
+    internal::RegisterMenuAccessibility(raw->window, AccessibleItems(*raw, focusedChild));
     return true;
 }
 
@@ -296,6 +319,9 @@ void PopupController::Select(size_t level, int row) {
     CloseFrom(level + 1);
     EnsureVisible(level, row);
     InvalidateRect(current.window, nullptr, FALSE);
+    const auto focusedChild = UpdateAccessibility(level);
+    if (focusedChild)
+        internal::NotifyAccessibility(current.window, EVENT_OBJECT_FOCUS, focusedChild);
 }
 
 void PopupController::OpenChild(size_t level, int row, bool immediate) {
@@ -425,6 +451,7 @@ void PopupController::MouseWheel(HWND window, WPARAM wParam, LPARAM lParam) {
     current.scrollOffset = offset;
     CloseFrom(level + 1);
     InvalidateRect(current.window, nullptr, FALSE);
+    UpdateAccessibility(level);
 }
 
 void PopupController::KeyDown(WPARAM key) {
@@ -495,6 +522,14 @@ void PopupController::ChildTimerElapsed() {
 void PopupController::WindowDestroyed(HWND window) {
     for (auto& level : levels_)
         if (level->window == window) level->window = nullptr;
+}
+
+int PopupController::UpdateAccessibility(size_t level) {
+    if (level >= levels_.size() || !levels_[level]->window) return 0;
+    int focusedChild{};
+    auto items = AccessibleItems(*levels_[level], focusedChild);
+    internal::UpdateMenuAccessibility(levels_[level]->window, std::move(items), focusedChild);
+    return focusedChild;
 }
 
 void DrawCheck(Gdiplus::Graphics& graphics, RECT bounds, Color color, float width) {
@@ -636,6 +671,10 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_KEYDOWN:
         if (controller) controller->KeyDown(wParam);
         return 0;
+    case internal::MenuActivateAccessibleMessage:
+        if (controller)
+            controller->Activate(controller->LevelIndex(window), static_cast<int>(wParam));
+        return 0;
     case WM_TIMER:
         if (controller && wParam == ChildTimer) controller->ChildTimerElapsed();
         return 0;
@@ -662,6 +701,7 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         }
         return DefWindowProcW(window, message, wParam, lParam);
     case WM_NCDESTROY:
+        internal::DestroyAccessibility(window);
         if (controller) controller->WindowDestroyed(window);
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
         return DefWindowProcW(window, message, wParam, lParam);

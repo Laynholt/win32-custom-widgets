@@ -15,6 +15,10 @@ HWND watchedWindow;
 int focusEvents;
 int valueEvents;
 int selectionEvents;
+int stateEvents;
+int menuCommand;
+int keyboardMenuCommand;
+HWND menuButton;
 
 void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child,
                            DWORD, DWORD) {
@@ -22,6 +26,7 @@ void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND window, LONG object,
     if (event == EVENT_OBJECT_FOCUS) ++focusEvents;
     if (event == EVENT_OBJECT_VALUECHANGE) ++valueEvents;
     if (event == EVENT_OBJECT_SELECTION) ++selectionEvents;
+    if (event == EVENT_OBJECT_STATECHANGE) ++stateEvents;
 }
 
 void PumpEvents() {
@@ -31,6 +36,8 @@ void PumpEvents() {
 
 LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_COMMAND && HIWORD(wParam) == BN_CLICKED) ++clicks;
+    if (message == WM_COMMAND && reinterpret_cast<HWND>(lParam) == menuButton)
+        menuCommand = LOWORD(wParam);
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
@@ -50,29 +57,90 @@ VARIANT Self() {
     return value;
 }
 
-long Role(IAccessible* accessible) {
+long Role(IAccessible* accessible, VARIANT child = Self()) {
     VARIANT role;
     VariantInit(&role);
-    CHECK(accessible->get_accRole(Self(), &role) == S_OK);
+    CHECK(accessible->get_accRole(child, &role) == S_OK);
     CHECK(role.vt == VT_I4);
     return role.lVal;
 }
 
-long State(IAccessible* accessible) {
+long State(IAccessible* accessible, VARIANT child = Self()) {
     VARIANT state;
     VariantInit(&state);
-    CHECK(accessible->get_accState(Self(), &state) == S_OK);
+    CHECK(accessible->get_accState(child, &state) == S_OK);
     CHECK(state.vt == VT_I4);
     return state.lVal;
 }
 
 std::wstring TextProperty(IAccessible* accessible,
-                          HRESULT (STDMETHODCALLTYPE IAccessible::*getter)(VARIANT, BSTR*)) {
+                          HRESULT (STDMETHODCALLTYPE IAccessible::*getter)(VARIANT, BSTR*),
+                          VARIANT child = Self()) {
     BSTR text{};
-    CHECK((accessible->*getter)(Self(), &text) == S_OK);
+    CHECK((accessible->*getter)(child, &text) == S_OK);
     std::wstring result = text ? text : L"";
     SysFreeString(text);
     return result;
+}
+
+void CALLBACK SelectMenuWithKeyboard(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = FindWindowW(L"WcwMenuPopup", nullptr);
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+}
+
+void CALLBACK InspectAccessibleMenu(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = FindWindowW(L"WcwMenuPopup", nullptr);
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+
+    auto* buttonAccessible = Accessible(menuButton);
+    CHECK((State(buttonAccessible) & STATE_SYSTEM_EXPANDED) != 0);
+    CHECK(TextProperty(buttonAccessible, &IAccessible::get_accDefaultAction) == L"Close");
+    buttonAccessible->Release();
+
+    auto* menuAccessible = Accessible(popup);
+    CHECK(Role(menuAccessible) == ROLE_SYSTEM_MENUPOPUP);
+    long childCount{};
+    CHECK(menuAccessible->get_accChildCount(&childCount) == S_OK);
+    CHECK(childCount == 3);
+
+    auto first = Self();
+    first.lVal = 1;
+    auto parentItem = Self();
+    parentItem.lVal = 2;
+    auto unavailable = Self();
+    unavailable.lVal = 3;
+    CHECK(Role(menuAccessible, first) == ROLE_SYSTEM_MENUITEM);
+    CHECK(TextProperty(menuAccessible, &IAccessible::get_accName, first) == L"Open");
+    CHECK((State(menuAccessible, first) & STATE_SYSTEM_FOCUSED) != 0);
+    CHECK((State(menuAccessible, first) & STATE_SYSTEM_CHECKED) != 0);
+    CHECK((State(menuAccessible, parentItem) & STATE_SYSTEM_HASPOPUP) != 0);
+    CHECK((State(menuAccessible, unavailable) & STATE_SYSTEM_UNAVAILABLE) != 0);
+    CHECK(TextProperty(menuAccessible, &IAccessible::get_accDefaultAction, first) == L"Execute");
+
+    VARIANT focus;
+    VariantInit(&focus);
+    CHECK(menuAccessible->get_accFocus(&focus) == S_OK);
+    CHECK(focus.vt == VT_I4 && focus.lVal == 1);
+    VARIANT destination;
+    VariantInit(&destination);
+    CHECK(menuAccessible->accNavigate(NAVDIR_FIRSTCHILD, Self(), &destination) == S_OK);
+    CHECK(destination.vt == VT_I4 && destination.lVal == 1);
+    VariantClear(&destination);
+    CHECK(menuAccessible->accNavigate(NAVDIR_NEXT, first, &destination) == S_OK);
+    CHECK(destination.vt == VT_I4 && destination.lVal == 2);
+    long left{}, top{}, width{}, height{};
+    CHECK(menuAccessible->accLocation(&left, &top, &width, &height, first) == S_OK);
+    CHECK(width > 0 && height > 0);
+
+    const auto action = menuAccessible->accDoDefaultAction(first);
+    CHECK(action == S_OK);
+    if (action != S_OK) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+    menuAccessible->Release();
 }
 
 struct ThreadCheck {
@@ -309,6 +377,42 @@ int main() {
     CHECK(selectionEvents == 0);
     CHECK(TextProperty(accessible, &IAccessible::get_accValue) == L"Blizzard Sorceress");
     accessible->Release();
+
+    wcw::MenuButtonOptions menuOptions;
+    menuOptions.parent = parent;
+    menuOptions.id = 55;
+    menuOptions.bounds = {0, 230, 180, 30};
+    menuOptions.text = L"Actions";
+    menuOptions.items = {{.id = 70, .text = L"Open", .checked = true},
+                         {.separator = true},
+                         {.text = L"More", .children = {{.id = 71, .text = L"Nested"}}},
+                         {.id = 72, .text = L"Unavailable", .enabled = false}};
+    menuButton = wcw::CreateMenuButton(menuOptions);
+    CHECK(menuButton != nullptr);
+    auto* menuButtonAccessible = Accessible(menuButton);
+    CHECK(Role(menuButtonAccessible) == ROLE_SYSTEM_PUSHBUTTON);
+    const auto collapsedState = State(menuButtonAccessible);
+    CHECK((collapsedState & STATE_SYSTEM_HASPOPUP) != 0);
+    CHECK((collapsedState & STATE_SYSTEM_COLLAPSED) != 0);
+    CHECK(TextProperty(menuButtonAccessible, &IAccessible::get_accDefaultAction) == L"Open");
+
+    watchedWindow = menuButton;
+    stateEvents = 0;
+    menuCommand = 0;
+    SetTimer(parent, 1, 1, SelectMenuWithKeyboard);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    keyboardMenuCommand = menuCommand;
+    CHECK(keyboardMenuCommand == 70);
+
+    menuCommand = 0;
+    SetTimer(parent, 2, 1, InspectAccessibleMenu);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    CHECK(menuCommand == keyboardMenuCommand);
+    CHECK((State(menuButtonAccessible) & STATE_SYSTEM_COLLAPSED) != 0);
+    CHECK(TextProperty(menuButtonAccessible, &IAccessible::get_accDefaultAction) == L"Open");
+    PumpEvents();
+    CHECK(stateEvents == 4);
+    menuButtonAccessible->Release();
 
     wcw::ScrollViewOptions scrollOptions;
     scrollOptions.parent = parent;
