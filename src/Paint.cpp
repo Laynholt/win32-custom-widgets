@@ -140,7 +140,7 @@ void Image(HDC dc, ImageSource source, const RECT& bounds, Color foreground) {
     const float height = static_cast<float>(bounds.bottom - bounds.top);
     if (width <= 0 || height <= 0) return;
     const float size = (std::min)(width, height);
-    const float penWidth = (std::max)(1.5f, width / 12.0f);
+    const float penWidth = (std::max)(1.5f, size / 12.0f);
     const Gdiplus::RectF square{
         static_cast<float>(bounds.left) + (width - size) / 2.0f + penWidth,
         static_cast<float>(bounds.top) + (height - size) / 2.0f + penWidth,
@@ -150,6 +150,7 @@ void Image(HDC dc, ImageSource source, const RECT& bounds, Color foreground) {
     Gdiplus::Graphics graphics(dc);
     graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     Gdiplus::Pen pen(GdiPlusColor(foreground), penWidth);
+    pen.SetAlignment(Gdiplus::PenAlignmentInset);
     pen.SetStartCap(Gdiplus::LineCapRound);
     pen.SetEndCap(Gdiplus::LineCapRound);
     pen.SetLineJoin(Gdiplus::LineJoinRound);

@@ -95,7 +95,10 @@ void PaintDisplay(HWND window, const DisplayState& state) {
         const auto background = state.kind == DisplayKind::Panel
                                     ? local.background.value_or(theme.palette.panel)
                                     : style.background;
-        paint::Fill(graphics, shape, radius, background);
+        if (radius > 0)
+            paint::Fill(graphics, shape, radius, background);
+        else
+            paint::Clear(buffer.dc(), bounds, background);
         if (state.kind == DisplayKind::Panel)
             paint::Border(graphics, shape, radius, style.border,
                           paint::ToPixels(style.borderWidthDip, dpi));

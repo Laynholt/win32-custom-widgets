@@ -134,10 +134,10 @@ void CheckBuiltinIconPixels(HWND window) {
     CHECK(hasBackground);
     CHECK(hasForeground);
     CHECK(hasIntermediate);
-    CHECK(GetRValue(GetPixel(dc, 0, 0)) < 128);
-    CHECK(GetRValue(GetPixel(dc, bounds.right - 1, 0)) < 128);
-    CHECK(GetRValue(GetPixel(dc, 0, bounds.bottom - 1)) < 128);
-    CHECK(GetRValue(GetPixel(dc, bounds.right - 1, bounds.bottom - 1)) < 128);
+    CHECK(GetPixel(dc, 0, 0) == background);
+    CHECK(GetPixel(dc, bounds.right - 1, 0) == background);
+    CHECK(GetPixel(dc, 0, bounds.bottom - 1) == background);
+    CHECK(GetPixel(dc, bounds.right - 1, bounds.bottom - 1) == background);
     ReleaseDC(window, dc);
 }
 
@@ -367,6 +367,20 @@ int main() {
         CheckBuiltinIconPixels(builtinViews[index]);
     }
 
+    base.id = 63;
+    base.bounds = {90, 130, 120, 20};
+    const auto stretchedBuiltin = wcw::CreateImageView(
+        base, wcw::ImageSource(wcw::BuiltinIcon::Information), wcw::ImageMode::Stretch);
+    CHECK(stretchedBuiltin != nullptr);
+    ShowWindow(stretchedBuiltin, SW_SHOWNOACTIVATE);
+    CHECK(RedrawWindow(stretchedBuiltin, nullptr, nullptr,
+                       RDW_INVALIDATE | RDW_UPDATENOW) != FALSE);
+    CheckBuiltinIconPixels(stretchedBuiltin);
+    const auto stretchedForeground = ForegroundBounds(
+        stretchedBuiltin, RGB(0, 0, 0), RGB(255, 255, 255));
+    CHECK(stretchedForeground.right - stretchedForeground.left >= 8);
+    CHECK(stretchedForeground.bottom - stretchedForeground.top >= 8);
+
     base.bounds = {0, 70, 120, 48};
     base.text = L"Centered";
     base.appearance = {.background = wcw::Color::FromRgb(0, 0, 0),
@@ -412,6 +426,7 @@ int main() {
     DestroyWindow(dialog);
     DestroyWindow(paddedLabel);
     DestroyWindow(wrappedLabel);
+    DestroyWindow(stretchedBuiltin);
     for (const auto view : builtinViews) DestroyWindow(view);
     for (const auto control : controls) DestroyWindow(control);
     wcw::Shutdown();
