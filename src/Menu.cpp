@@ -291,6 +291,10 @@ bool PopupController::Run() {
             if (result == 0) PostQuitMessage(static_cast<int>(message.wParam));
             break;
         }
+        if (message.message == WM_POINTERDOWN || message.message == WM_POINTERUP) {
+            const POINT point{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
+            if (!InsideChain(point)) Cancel();
+        }
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
@@ -741,11 +745,7 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         if (controller) controller->UpdateRegion(window);
         return 0;
     case WM_DPICHANGED:
-        if (const auto* suggested = reinterpret_cast<RECT*>(lParam))
-            SetWindowPos(window, nullptr, suggested->left, suggested->top,
-                         suggested->right - suggested->left, suggested->bottom - suggested->top,
-                         SWP_NOACTIVATE | SWP_NOZORDER);
-        if (controller) controller->UpdateRegion(window);
+        if (controller) controller->Cancel();
         return 0;
     case WM_GETOBJECT:
         if (controller) {

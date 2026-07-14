@@ -22,8 +22,10 @@ bool popupAliveWhenCommand;
 int popupCountAtCommand;
 RECT capturedPopup{};
 HWND menuButton{};
+HWND pointerTarget{};
 int menuButtonId{};
 int buttonIdCommands{};
+int pointerMessages{};
 bool destroyCommandSource{};
 bool dismissFallback{};
 bool leftFocusNotified{};
@@ -99,6 +101,52 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (destroyCommandSource && lParam) DestroyWindow(reinterpret_cast<HWND>(lParam));
     }
     return DefWindowProcW(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK PointerTargetProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_POINTERDOWN || message == WM_POINTERUP) {
+        ++pointerMessages;
+        return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+POINTER_TOUCH_INFO OutsideTouch(DWORD flags) {
+    RECT bounds{};
+    CHECK(GetWindowRect(pointerTarget, &bounds));
+    const POINT point{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+    CHECK(WindowFromPoint(point) == pointerTarget);
+    POINTER_TOUCH_INFO touch{};
+    touch.pointerInfo.pointerType = PT_TOUCH;
+    touch.pointerInfo.pointerId = 0;
+    touch.pointerInfo.pointerFlags = flags;
+    touch.pointerInfo.ptPixelLocation = point;
+    touch.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_ORIENTATION | TOUCH_MASK_PRESSURE;
+    touch.rcContact = {point.x - 2, point.y - 2, point.x + 2, point.y + 2};
+    touch.orientation = 90;
+    touch.pressure = 32000;
+    return touch;
+}
+
+void InjectOutsideTouch(DWORD flags) {
+    auto touch = OutsideTouch(flags);
+    CHECK(InjectTouchInput(1, &touch));
+}
+
+void PumpMessages() {
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+}
+
+void PumpPointerMessages(int expected) {
+    const auto deadline = GetTickCount64() + 100;
+    while (pointerMessages < expected && GetTickCount64() < deadline) {
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+        PumpMessages();
+    }
 }
 
 INT_PTR CALLBACK DialogProc(HWND, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -367,14 +415,29 @@ void CALLBACK DismissOutside(HWND owner, UINT, UINT_PTR timer, DWORD) {
     CHECK(GetWindowRect(popup, &bounds));
     const POINT outside{bounds.left - 10, bounds.top - 10};
     SetTimer(owner, timer + 100, 30, DismissFallback);
-    if (timer == 30 || timer == 31) {
-        POINT client = outside;
-        ScreenToClient(popup, &client);
-        SendMessageW(popup, timer == 30 ? WM_RBUTTONUP : WM_MBUTTONUP, 0,
-                     MAKELPARAM(client.x, client.y));
-    } else {
-        SendMessageW(popup, WM_POINTERUP, 1, MAKELPARAM(outside.x, outside.y));
-    }
+    POINT client = outside;
+    ScreenToClient(popup, &client);
+    SendMessageW(popup, timer == 30 ? WM_RBUTTONUP : WM_MBUTTONUP, 0,
+                 MAKELPARAM(client.x, client.y));
+}
+
+void CALLBACK InjectOutsidePointer(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    SetTimer(owner, timer + 100, 30, DismissFallback);
+    InjectOutsideTouch(timer == 35 ? POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE |
+                                        POINTER_FLAG_INCONTACT
+                                  : POINTER_FLAG_UP);
+}
+
+void CALLBACK ChangePopupDpi(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    RECT bounds{};
+    CHECK(GetWindowRect(popup, &bounds));
+    SetTimer(owner, timer + 100, 30, DismissFallback);
+    SendMessageW(popup, WM_DPICHANGED, MAKEWPARAM(192, 192),
+                 reinterpret_cast<LPARAM>(&bounds));
 }
 
 void CALLBACK IgnoreInsideNonPrimary(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -504,9 +567,18 @@ int main() {
                                 .hInstance = instance,
                                 .lpszClassName = L"WcwMenuTestParent"};
     CHECK(RegisterClassW(&parentClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS);
+    const WNDCLASSW pointerClass{.lpfnWndProc = PointerTargetProc,
+                                 .hInstance = instance,
+                                 .lpszClassName = L"WcwMenuPointerTarget"};
+    CHECK(RegisterClassW(&pointerClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS);
     const auto parent = CreateWindowExW(0, parentClass.lpszClassName, L"", WS_OVERLAPPED,
                                         0, 0, 320, 240, nullptr, nullptr, instance, nullptr);
     CHECK(parent != nullptr);
+    pointerTarget = CreateWindowExW(WS_EX_TOPMOST, pointerClass.lpszClassName, L"", WS_POPUP,
+                                    500, 500, 40, 40, nullptr, nullptr, instance, nullptr);
+    CHECK(pointerTarget != nullptr);
+    ShowWindow(pointerTarget, SW_SHOWNOACTIVATE);
+    CHECK(InitializeTouchInjection(1, TOUCH_FEEDBACK_NONE));
     CHECK(wcw::Initialize(instance));
 
     menuButtonId = 300;
@@ -704,7 +776,7 @@ int main() {
     CHECK(commandId == 0);
     CHECK(Popup() == nullptr);
 
-    for (UINT_PTR timer = 30; timer <= 32; ++timer) {
+    for (UINT_PTR timer = 30; timer <= 31; ++timer) {
         dismissFallback = false;
         SetTimer(parent, timer, 1, DismissOutside);
         CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
@@ -721,6 +793,34 @@ int main() {
         CHECK(dismissFallback);
         CHECK(commandId == 0);
     }
+    dismissFallback = false;
+    pointerMessages = 0;
+    SetTimer(parent, 35, 1, InjectOutsidePointer);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+    KillTimer(parent, 135);
+    CHECK(!dismissFallback);
+    CHECK(pointerMessages == 1);
+    CHECK(Popup() == nullptr);
+    InjectOutsideTouch(POINTER_FLAG_UP);
+    PumpPointerMessages(2);
+
+    dismissFallback = false;
+    pointerMessages = 0;
+    InjectOutsideTouch(POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT);
+    PumpPointerMessages(1);
+    CHECK(pointerMessages == 1);
+    SetTimer(parent, 36, 1, InjectOutsidePointer);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+    KillTimer(parent, 136);
+    CHECK(!dismissFallback);
+    CHECK(pointerMessages == 2);
+    CHECK(Popup() == nullptr);
+    dismissFallback = false;
+    SetTimer(parent, 37, 1, ChangePopupDpi);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+    KillTimer(parent, 137);
+    CHECK(!dismissFallback);
+    CHECK(Popup() == nullptr);
 
     const auto focusWindow = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE,
                                              0, 0, 80, 24, parent, nullptr, instance, nullptr);
@@ -828,6 +928,7 @@ int main() {
     DestroyWindow(dialog);
     DestroyWindow(focusWindow);
     wcw::Shutdown();
+    DestroyWindow(pointerTarget);
     DestroyWindow(parent);
     return testFailures;
 }

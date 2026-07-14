@@ -123,3 +123,45 @@ Total Test time: 13.51 sec
 - Debug and Release GUI suites must run sequentially: running them concurrently causes cross-process collisions because existing tests use global `FindWindow` class-name lookup. No product workaround was added.
 - One unchanged Release `ValueControlsTests` timing assertion (`GetUpdateRect`) failed once, passed immediately in isolation, and passed in the two subsequent complete Release runs. The final required Release result is clean 12/12.
 - No remaining functional concern was found in the requested scope.
+
+## Residual review follow-up
+
+Two residual findings were fixed after the final review of commit `81bf294`.
+
+### Real pointer routing outside the popup chain
+
+The nested popup loop now inspects queued `WM_POINTERDOWN` and `WM_POINTERUP` messages before dispatch. If their screen point is outside every popup level, it cancels the controller and still translates and dispatches the external message.
+
+The regression uses Windows touch injection and a visible separate target window rather than sending a pointer message directly to the popup. It covers both directions independently:
+
+- injects a new contact outside while the menu is running to route `WM_POINTERDOWN` to the target;
+- establishes a contact on the target before opening the menu, then injects the release while the nested loop is running to route `WM_POINTERUP` to the target.
+
+The target consumes the pointer messages to suppress promoted mouse input, so cancellation cannot be attributed to the existing mouse-capture path. Target message counts verify that cancellation does not swallow the external pointer message.
+
+### DPI changes
+
+`WM_DPICHANGED` now cancels the popup. This avoids retaining row bounds, content height, scroll state, and accessibility geometry measured for the previous DPI.
+
+### RED/GREEN evidence
+
+With only the new tests present, focused Release `MenuTests` failed exactly at the fallback assertions for routed pointer down, routed pointer up, and `WM_DPICHANGED`; all separate-target delivery assertions passed. After the two production edits:
+
+```text
+rtk proxy .\build-final-release\Release\MenuTests.exe
+Exit code: 0
+```
+
+Fresh x64 Debug and Release trees were then configured and completely built. Final sequential suite results:
+
+```text
+rtk proxy ctest --test-dir build-residual-debug -C Debug --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 36.85 sec
+
+rtk proxy ctest --test-dir build-residual-release -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 11.48 sec
+```
+
+The first Release suite and its first isolated retry encountered the same unchanged `ValueControlsTests` 40 ms `GetUpdateRect` timing flake noted above. The next isolated run passed, followed by the clean complete Release result recorded here. `MenuTests` passed in every GREEN/full-suite run.
