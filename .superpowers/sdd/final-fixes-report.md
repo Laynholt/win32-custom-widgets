@@ -223,3 +223,23 @@ rtk proxy ctest --test-dir build-button-capture-release -C Release --output-on-f
 100% tests passed, 0 tests failed out of 12
 Total Test time (real) = 41.28 sec
 ```
+
+## Deterministic queued-pointer menu tests
+
+The clean final Release verification exposed another harness failure in the clipped-corner pointer case: the 30 ms fallback dismissed the menu before `InjectTouchInput` produced `WM_POINTERDOWN`, leaving both `dismissFallback` and `pointerMessages` wrong. The unchanged focused binary reproduced the exact pair twice in twenty runs.
+
+Systematic diagnostics ruled out production routing. Extending the post-fallback pump still observed no pointer message; a condition-signaled worker and a separately prepositioned target did not eliminate the loss. Even a worker that followed the documented injected-contact lifecycle—same-point `DOWN`, periodic `UPDATE` frames, and a matching final/canceled `UP`—lost four of thirty contacts. Every failed sequence joined its worker and successfully ended the contact, but Windows had never queued the initial pointer message. Physical desktop injection was therefore removed from this CI regression rather than hidden behind a longer delay or retry.
+
+The test now installs a same-thread `WH_GETMESSAGE` hook. It transforms only two test-unique `WM_APP` messages posted to the separate target window into `WM_POINTERDOWN` and `WM_POINTERUP`, preserving the target HWND and screen-coordinate `lParam`. Consequently the nested production loop still removes an actual queued pointer message, performs complete popup teardown, and only then dispatches it to the target. The existing assertions still require no fallback dismissal, exact single delivery before `UP`, the original popup already destroyed in the target procedure, successful synchronous replacement opening, and rounded-region exclusion at the clipped corner. The hook is uninstalled before the test windows are destroyed. No production code changed.
+
+The deterministic focused Release `MenuTests` passed twenty consecutive runs. Fresh x64 Debug and Release trees were configured, completely built, and tested sequentially:
+
+```text
+rtk proxy ctest --test-dir build-pointer-hook-debug -C Debug --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 36.15 sec
+
+rtk proxy ctest --test-dir build-pointer-hook-release -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 38.07 sec
+```

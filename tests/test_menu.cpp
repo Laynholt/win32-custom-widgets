@@ -23,6 +23,7 @@ int popupCountAtCommand;
 RECT capturedPopup{};
 HWND menuButton{};
 HWND pointerTarget{};
+HHOOK pointerQueueHook{};
 int menuButtonId{};
 int buttonIdCommands{};
 int pointerMessages{};
@@ -38,6 +39,8 @@ bool trackLeftFocus{};
 HWND leftFocusRoot{};
 HWINEVENTHOOK focusHook{};
 const std::vector<wcw::MenuItem> replacementMenu{{.id = 302, .text = L"Replacement"}};
+constexpr UINT QueuedPointerDownMessage = WM_APP + 1;
+constexpr UINT QueuedPointerUpMessage = WM_APP + 2;
 
 bool SameRect(RECT left, RECT right) {
     return left.left == right.left && left.top == right.top &&
@@ -133,29 +136,31 @@ LRESULT CALLBACK PointerTargetProc(HWND window, UINT message, WPARAM wParam, LPA
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-POINTER_TOUCH_INFO TouchAt(POINT point, DWORD flags) {
+LRESULT CALLBACK PointerQueueProc(int code, WPARAM wParam, LPARAM lParam) {
+    if (code >= 0 && wParam == PM_REMOVE) {
+        auto* message = reinterpret_cast<MSG*>(lParam);
+        if (message && message->hwnd == pointerTarget) {
+            if (message->message == QueuedPointerDownMessage)
+                message->message = WM_POINTERDOWN;
+            else if (message->message == QueuedPointerUpMessage)
+                message->message = WM_POINTERUP;
+        }
+    }
+    return CallNextHookEx(pointerQueueHook, code, wParam, lParam);
+}
+
+void QueuePointerAt(POINT point, UINT message) {
     CHECK(WindowFromPoint(point) == pointerTarget);
-    POINTER_TOUCH_INFO touch{};
-    touch.pointerInfo.pointerType = PT_TOUCH;
-    touch.pointerInfo.pointerId = 0;
-    touch.pointerInfo.pointerFlags = flags;
-    touch.pointerInfo.ptPixelLocation = point;
-    touch.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_ORIENTATION | TOUCH_MASK_PRESSURE;
-    touch.rcContact = {point.x - 2, point.y - 2, point.x + 2, point.y + 2};
-    touch.orientation = 90;
-    touch.pressure = 32000;
-    return touch;
+    const auto queued = message == WM_POINTERDOWN ? QueuedPointerDownMessage
+                                                   : QueuedPointerUpMessage;
+    CHECK(message == WM_POINTERDOWN || message == WM_POINTERUP);
+    CHECK(PostMessageW(pointerTarget, queued, 0, MAKELPARAM(point.x, point.y)));
 }
 
-void InjectTouchAt(POINT point, DWORD flags) {
-    auto touch = TouchAt(point, flags);
-    CHECK(InjectTouchInput(1, &touch));
-}
-
-void InjectOutsideTouch(DWORD flags) {
+void QueuePointerOutsideTarget(UINT message) {
     RECT bounds{};
     CHECK(GetWindowRect(pointerTarget, &bounds));
-    InjectTouchAt({(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2}, flags);
+    QueuePointerAt({(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2}, message);
 }
 
 void PumpMessages() {
@@ -163,14 +168,6 @@ void PumpMessages() {
     while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
-    }
-}
-
-void PumpPointerMessages(int expected) {
-    const auto deadline = GetTickCount64() + 100;
-    while (pointerMessages < expected && GetTickCount64() < deadline) {
-        MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
-        PumpMessages();
     }
 }
 
@@ -452,15 +449,13 @@ void CALLBACK DismissOutside(HWND owner, UINT, UINT_PTR timer, DWORD) {
                  MAKELPARAM(client.x, client.y));
 }
 
-void CALLBACK InjectOutsidePointer(HWND owner, UINT, UINT_PTR timer, DWORD) {
+void CALLBACK QueueOutsidePointer(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     SetTimer(owner, timer + 100, timer == 35 ? 200 : 30, DismissFallback);
-    InjectOutsideTouch(timer == 35 ? POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE |
-                                        POINTER_FLAG_INCONTACT
-                                  : POINTER_FLAG_UP);
+    QueuePointerOutsideTarget(timer == 35 ? WM_POINTERDOWN : WM_POINTERUP);
 }
 
-void CALLBACK InjectClippedCorner(HWND owner, UINT, UINT_PTR timer, DWORD) {
+void CALLBACK QueueClippedCorner(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     const auto popup = Popup();
     CHECK(popup != nullptr);
@@ -471,8 +466,7 @@ void CALLBACK InjectClippedCorner(HWND owner, UINT, UINT_PTR timer, DWORD) {
                        20, 20, SWP_NOACTIVATE));
     CHECK(WindowFromPoint(clippedCorner) == pointerTarget);
     SetTimer(owner, timer + 100, 30, DismissFallback);
-    InjectTouchAt(clippedCorner, POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE |
-                                     POINTER_FLAG_INCONTACT);
+    QueuePointerAt(clippedCorner, WM_POINTERDOWN);
 }
 
 void CALLBACK ChangePopupDpi(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -624,7 +618,9 @@ int main() {
                                     500, 500, 40, 40, nullptr, nullptr, instance, nullptr);
     CHECK(pointerTarget != nullptr);
     ShowWindow(pointerTarget, SW_SHOWNOACTIVATE);
-    CHECK(InitializeTouchInjection(1, TOUCH_FEEDBACK_NONE));
+    pointerQueueHook = SetWindowsHookExW(WH_GETMESSAGE, PointerQueueProc, nullptr,
+                                         GetCurrentThreadId());
+    CHECK(pointerQueueHook != nullptr);
     CHECK(wcw::Initialize(instance));
 
     menuButtonId = 300;
@@ -845,7 +841,7 @@ int main() {
     pointerPopupClosed = false;
     pointerReplacementShown = false;
     pointerReplacementError = ERROR_SUCCESS;
-    SetTimer(parent, 35, 1, InjectOutsidePointer);
+    SetTimer(parent, 35, 1, QueueOutsidePointer);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
     KillTimer(parent, 135);
     CHECK(!dismissFallback);
@@ -854,15 +850,16 @@ int main() {
     CHECK(pointerReplacementShown);
     CHECK(pointerReplacementError != ERROR_BUSY);
     CHECK(Popup() == nullptr);
-    InjectOutsideTouch(POINTER_FLAG_UP);
-    PumpPointerMessages(2);
+    QueuePointerOutsideTarget(WM_POINTERUP);
+    PumpMessages();
+    CHECK(pointerMessages == 2);
 
     dismissFallback = false;
     pointerMessages = 0;
-    InjectOutsideTouch(POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT);
-    PumpPointerMessages(1);
+    QueuePointerOutsideTarget(WM_POINTERDOWN);
+    PumpMessages();
     CHECK(pointerMessages == 1);
-    SetTimer(parent, 36, 1, InjectOutsidePointer);
+    SetTimer(parent, 36, 1, QueueOutsidePointer);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
     KillTimer(parent, 136);
     CHECK(!dismissFallback);
@@ -871,14 +868,15 @@ int main() {
 
     dismissFallback = false;
     pointerMessages = 0;
-    SetTimer(parent, 39, 1, InjectClippedCorner);
+    SetTimer(parent, 39, 1, QueueClippedCorner);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, accessibleMenu));
     KillTimer(parent, 139);
     CHECK(!dismissFallback);
     CHECK(pointerMessages == 1);
     CHECK(Popup() == nullptr);
-    InjectTouchAt(clippedCorner, POINTER_FLAG_UP);
-    PumpPointerMessages(2);
+    QueuePointerAt(clippedCorner, WM_POINTERUP);
+    PumpMessages();
+    CHECK(pointerMessages == 2);
     CHECK(SetWindowPos(pointerTarget, HWND_TOPMOST, 500, 500, 40, 40, SWP_NOACTIVATE));
 
     dismissFallback = false;
@@ -994,6 +992,7 @@ int main() {
     DestroyWindow(dialog);
     DestroyWindow(focusWindow);
     wcw::Shutdown();
+    CHECK(UnhookWindowsHookEx(pointerQueueHook));
     DestroyWindow(pointerTarget);
     DestroyWindow(parent);
     return testFailures;
