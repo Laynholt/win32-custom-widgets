@@ -7,8 +7,10 @@
 #include <wcw/Runtime.h>
 
 #include <windows.h>
+#include <oleacc.h>
 
 #include <algorithm>
+#include <array>
 #include <vector>
 
 namespace {
@@ -22,6 +24,12 @@ RECT capturedPopup{};
 HWND menuButton{};
 int menuButtonId{};
 int buttonIdCommands{};
+bool destroyCommandSource{};
+bool dismissFallback{};
+bool leftFocusNotified{};
+bool trackLeftFocus{};
+HWND leftFocusRoot{};
+HWINEVENTHOOK focusHook{};
 const std::vector<wcw::MenuItem> replacementMenu{{.id = 302, .text = L"Replacement"}};
 
 bool SameRect(RECT left, RECT right) {
@@ -44,6 +52,35 @@ int PopupCount() {
     return count;
 }
 
+HWND OtherPopup(HWND root) {
+    std::array<HWND, 2> windows{root, nullptr};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM value) {
+        wchar_t name[64]{};
+        GetClassNameW(window, name, static_cast<int>(std::size(name)));
+        const auto root = reinterpret_cast<HWND*>(value)[0];
+        if (wcscmp(name, L"WcwMenuPopup") == 0 && window != root) {
+            reinterpret_cast<HWND*>(value)[1] = window;
+            return FALSE;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(windows.data()));
+    return windows[1];
+}
+
+IAccessible* PopupAccessible(HWND popup) {
+    IAccessible* accessible{};
+    CHECK(AccessibleObjectFromWindow(popup, OBJID_CLIENT, IID_IAccessible,
+                                     reinterpret_cast<void**>(&accessible)) == S_OK);
+    return accessible;
+}
+
+VARIANT Child(long id) {
+    VARIANT child{};
+    child.vt = VT_I4;
+    child.lVal = id;
+    return child;
+}
+
 void ResetCommand() {
     commandId = commandCode = 0;
     commandSource = 0;
@@ -59,6 +96,7 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (commandId == menuButtonId) ++buttonIdCommands;
         popupAliveWhenCommand = Popup() != nullptr;
         popupCountAtCommand = PopupCount();
+        if (destroyCommandSource && lParam) DestroyWindow(reinterpret_cast<HWND>(lParam));
     }
     return DefWindowProcW(window, message, wParam, lParam);
 }
@@ -249,6 +287,147 @@ void CALLBACK ReplaceMenu(HWND owner, UINT, UINT_PTR timer, DWORD) {
     CHECK(wcw::SetMenuItems(menuButton, replacementMenu));
 }
 
+void CALLBACK InspectAccessibility(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    auto* accessible = PopupAccessible(popup);
+    if (accessible) {
+        long left{}, top{}, width{}, height{};
+        CHECK(accessible->accLocation(&left, &top, &width, &height, Child(1)) == S_OK);
+        VARIANT hit{};
+        CHECK(accessible->accHitTest(left + width / 2, top + height / 2, &hit) == S_OK);
+        CHECK(hit.vt == VT_I4);
+        CHECK(hit.lVal == 1);
+        VariantClear(&hit);
+
+        BSTR action{};
+        CHECK(accessible->get_accDefaultAction(Child(1), &action) == S_OK);
+        CHECK(action && wcscmp(action, L"Open") == 0);
+        SysFreeString(action);
+        action = nullptr;
+        CHECK(accessible->get_accDefaultAction(Child(2), &action) == S_OK);
+        CHECK(action && wcscmp(action, L"Execute") == 0);
+        SysFreeString(action);
+        accessible->Release();
+    }
+
+    const auto region = CreateRectRgn(0, 0, 0, 0);
+    CHECK(region != nullptr);
+    CHECK(GetWindowRgn(popup, region) != ERROR);
+    RECT client{};
+    CHECK(GetClientRect(popup, &client));
+    CHECK(!PtInRegion(region, 0, 0));
+    CHECK(PtInRegion(region, client.right / 2, client.bottom / 2));
+    DeleteObject(region);
+    SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
+void CALLBACK InspectScrolledAccessibility(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    auto* accessible = PopupAccessible(popup);
+    if (accessible) {
+        long left{}, top{}, width{}, height{};
+        CHECK(accessible->accLocation(&left, &top, &width, &height, Child(1)) == S_OK);
+        VARIANT hit{};
+        CHECK(accessible->accHitTest(left + width / 2, top + height / 2, &hit) == S_OK);
+        CHECK(hit.vt == VT_I4 && hit.lVal == 1);
+        VariantClear(&hit);
+
+        VARIANT state{};
+        CHECK(accessible->get_accState(Child(100), &state) == S_OK);
+        CHECK(state.vt == VT_I4 && (state.lVal & STATE_SYSTEM_OFFSCREEN));
+        CHECK(accessible->accLocation(&left, &top, &width, &height, Child(100)) == S_OK);
+        CHECK(width == 0 || height == 0);
+
+        SendMessageW(popup, WM_MOUSEWHEEL, MAKEWPARAM(0, -WHEEL_DELTA), 0);
+        VariantClear(&state);
+        CHECK(accessible->get_accState(Child(1), &state) == S_OK);
+        CHECK(state.vt == VT_I4 && (state.lVal & STATE_SYSTEM_OFFSCREEN));
+        CHECK(accessible->accLocation(&left, &top, &width, &height, Child(1)) == S_OK);
+        CHECK(width == 0 || height == 0);
+        accessible->Release();
+    }
+    SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
+void CALLBACK DismissFallback(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    dismissFallback = true;
+    if (const auto popup = Popup()) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
+void CALLBACK DismissOutside(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    RECT bounds{};
+    CHECK(GetWindowRect(popup, &bounds));
+    const POINT outside{bounds.left - 10, bounds.top - 10};
+    SetTimer(owner, timer + 100, 30, DismissFallback);
+    if (timer == 30 || timer == 31) {
+        POINT client = outside;
+        ScreenToClient(popup, &client);
+        SendMessageW(popup, timer == 30 ? WM_RBUTTONUP : WM_MBUTTONUP, 0,
+                     MAKELPARAM(client.x, client.y));
+    } else {
+        SendMessageW(popup, WM_POINTERUP, 1, MAKELPARAM(outside.x, outside.y));
+    }
+}
+
+void CALLBACK IgnoreInsideNonPrimary(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    SetTimer(owner, timer + 100, 30, DismissFallback);
+    SendMessageW(popup, timer == 33 ? WM_RBUTTONUP : WM_MBUTTONUP, 0, MAKELPARAM(10, 10));
+}
+
+void CALLBACK DestroyMenuButton(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    CHECK(Popup() != nullptr);
+    SetTimer(owner, timer + 100, 30, DismissFallback);
+    DestroyWindow(menuButton);
+}
+
+void CALLBACK FocusEvent(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child,
+                         DWORD, DWORD) {
+    if (trackLeftFocus && event == EVENT_OBJECT_FOCUS && window == leftFocusRoot &&
+        object == OBJID_CLIENT && child == 1)
+        leftFocusNotified = true;
+}
+
+void CALLBACK FinishLeftFocus(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    trackLeftFocus = false;
+    if (focusHook) {
+        UnhookWinEvent(focusHook);
+        focusHook = nullptr;
+    }
+    if (const auto popup = Popup()) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
+void CALLBACK CloseSubmenuLeft(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto root = Popup();
+    CHECK(root != nullptr);
+    SendMessageW(root, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+    const auto child = OtherPopup(root);
+    CHECK(child != nullptr);
+    leftFocusRoot = root;
+    focusHook = SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS, nullptr, FocusEvent,
+                                GetCurrentProcessId(), GetCurrentThreadId(),
+                                WINEVENT_OUTOFCONTEXT);
+    CHECK(focusHook != nullptr);
+    trackLeftFocus = true;
+    SendMessageW(child, WM_KEYDOWN, VK_LEFT, 0);
+    CHECK(PopupCount() == 1);
+    SetTimer(owner, timer + 100, 30, FinishLeftFocus);
+}
+
 } // namespace
 
 int main() {
@@ -437,6 +616,14 @@ int main() {
         {.id = 102, .text = L"Second", .shortcut = L"Ctrl+S"},
         {.text = L"More", .children = {{.id = 103, .text = L"Nested"}}},
     }};
+    wcw::ContextMenuOptions accessibleMenu{{
+        {.text = L"More", .children = {{.id = 110, .text = L"Nested"}}},
+        {.id = 111, .text = L"Leaf"},
+    }};
+    accessibleMenu.appearance.cornerRadiusDip = 12.0f;
+    SetTimer(parent, 24, 1, InspectAccessibility);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, accessibleMenu));
+
     ResetCommand();
     SetTimer(parent, 1, 1, SelectSecond);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
@@ -469,6 +656,11 @@ int main() {
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, nested));
     CHECK(commandId == 0);
     CHECK(Popup() == nullptr);
+
+    leftFocusNotified = false;
+    SetTimer(parent, 25, 1, CloseSubmenuLeft);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, nested));
+    CHECK(leftFocusNotified);
 
     wcw::ContextMenuOptions disabled{{
         {.id = 201, .text = L"Disabled", .enabled = false},
@@ -511,6 +703,24 @@ int main() {
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
     CHECK(commandId == 0);
     CHECK(Popup() == nullptr);
+
+    for (UINT_PTR timer = 30; timer <= 32; ++timer) {
+        dismissFallback = false;
+        SetTimer(parent, timer, 1, DismissOutside);
+        CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+        KillTimer(parent, timer + 100);
+        CHECK(!dismissFallback);
+        CHECK(Popup() == nullptr);
+    }
+    for (UINT_PTR timer = 33; timer <= 34; ++timer) {
+        ResetCommand();
+        dismissFallback = false;
+        SetTimer(parent, timer, 1, IgnoreInsideNonPrimary);
+        CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
+        KillTimer(parent, timer + 100);
+        CHECK(dismissFallback);
+        CHECK(commandId == 0);
+    }
 
     const auto focusWindow = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE,
                                              0, 0, 80, 24, parent, nullptr, instance, nullptr);
@@ -555,6 +765,9 @@ int main() {
         overflow.items.push_back({.id = 1000 + index,
                                   .text = index == 0 ? std::wstring(2000, L'W')
                                                     : L"Item " + std::to_wstring(index)});
+    SetTimer(parent, 26, 1, InspectScrolledAccessibility);
+    CHECK(wcw::ShowContextMenu(parent, edge, overflow));
+
     capturedPopup = {};
     ResetCommand();
     SetTimer(parent, 15, 1, SelectHiddenLast);
@@ -592,8 +805,25 @@ int main() {
     CHECK(commandId == 0);
     CHECK(Popup() == nullptr);
 
+    auto commandDestroyOptions = menuButtonOptions;
+    commandDestroyOptions.id = 306;
+    commandDestroyOptions.items = replacementMenu;
+    const auto commandDestroyButton = wcw::CreateMenuButton(commandDestroyOptions);
+    CHECK(commandDestroyButton != nullptr);
+    destroyCommandSource = true;
+    SetTimer(parent, 27, 1, SelectFirst);
+    SendMessageW(commandDestroyButton, BM_CLICK, 0, 0);
+    destroyCommandSource = false;
+    CHECK(!IsWindow(commandDestroyButton));
+
+    dismissFallback = false;
+    SetTimer(parent, 28, 1, DestroyMenuButton);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    KillTimer(parent, 128);
+    CHECK(!dismissFallback);
+    CHECK(!IsWindow(menuButton));
+
     DestroyWindow(normalButton);
-    DestroyWindow(menuButton);
     DestroyWindow(dialogMenuButton);
     DestroyWindow(dialog);
     DestroyWindow(focusWindow);

@@ -47,11 +47,16 @@ void ActivateButton(HWND window, ButtonState& state) {
         RECT anchor{};
         GetWindowRect(window, &anchor);
         state.menuOpen = true;
+        auto* const openedState = &state;
         InvalidateRect(window, nullptr, FALSE);
         internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
         internal::ShowPopupMenu(GetParent(window), window, anchor, state.menuItems,
                                 state.menuAppearance);
-        state.menuOpen = false;
+        if (!IsWindow(window)) return;
+        auto* const current = reinterpret_cast<ButtonState*>(
+            GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (current != openedState) return;
+        current->menuOpen = false;
         InvalidateRect(window, nullptr, FALSE);
         internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
         return;
@@ -160,6 +165,7 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
+        internal::CancelPopupMenu(window);
         if (state) CancelPress(window, *state);
         delete state;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);

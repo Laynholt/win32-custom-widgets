@@ -211,6 +211,7 @@ public:
             auto flags = item->enabled ? STATE_SYSTEM_FOCUSABLE : STATE_SYSTEM_UNAVAILABLE;
             if (item->checked) flags |= STATE_SYSTEM_CHECKED;
             if (item->hasPopup) flags |= STATE_SYSTEM_HASPOPUP;
+            if (item->offscreen) flags |= STATE_SYSTEM_OFFSCREEN;
             if (child.lVal == info_.focusedChild) flags |= STATE_SYSTEM_FOCUSED;
             state->lVal = flags;
             return S_OK;
@@ -297,7 +298,7 @@ public:
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
         if (MenuItem(child)) {
-            *action = SysAllocString(L"Execute");
+            *action = SysAllocString(MenuItem(child)->hasPopup ? L"Open" : L"Execute");
             return *action ? S_OK : E_OUTOFMEMORY;
         }
         const auto selfReady = SelfReady(child, action);
@@ -369,6 +370,27 @@ public:
     }
     HRESULT STDMETHODCALLTYPE accHitTest(long x, long y, VARIANT* child) override {
         if (child) VariantInit(child);
+        if (info_.kind == AccessibleKind::Menu) {
+            const auto ready = Ready();
+            if (FAILED(ready)) return ready;
+            if (!child) return E_POINTER;
+            for (size_t index = 0; index < info_.menuItems.size(); ++index) {
+                const auto& item = info_.menuItems[index];
+                if (!item.offscreen && x >= item.screenBounds.left && x < item.screenBounds.right &&
+                    y >= item.screenBounds.top && y < item.screenBounds.bottom) {
+                    child->vt = VT_I4;
+                    child->lVal = static_cast<long>(index + 1);
+                    return S_OK;
+                }
+            }
+            RECT bounds{};
+            if (GetWindowRect(window_, &bounds) && x >= bounds.left && x < bounds.right &&
+                y >= bounds.top && y < bounds.bottom) {
+                child->vt = VT_I4;
+                child->lVal = CHILDID_SELF;
+                return S_OK;
+            }
+        }
         return Forward([&] { return standard_->accHitTest(x, y, child); });
     }
     HRESULT STDMETHODCALLTYPE accDoDefaultAction(VARIANT child) override {

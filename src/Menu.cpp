@@ -146,8 +146,10 @@ std::vector<internal::AccessibleMenuItem> AccessibleItems(const PopupLevel& leve
         ++child;
         auto screenBounds = level.rows[row];
         OffsetRect(&screenBounds, bounds.left, bounds.top - level.scrollOffset);
-        accessible.push_back({item.text, screenBounds, row, item.enabled, item.checked,
-                              !item.children.empty()});
+        RECT visible{};
+        const bool onScreen = IntersectRect(&visible, &screenBounds, &bounds) != FALSE;
+        accessible.push_back({item.text, visible, row, item.enabled, item.checked,
+                              !item.children.empty(), !onScreen});
         if (row == level.selected) focusedChild = child;
     }
     return accessible;
@@ -177,6 +179,8 @@ private:
     size_t LevelIndex(HWND window) const;
     void MouseMove(HWND window, LPARAM lParam);
     void MouseUp(HWND window, LPARAM lParam);
+    void DismissOutside(HWND window, LPARAM lParam);
+    void PointerUp(LPARAM lParam);
     void MouseWheel(HWND window, WPARAM wParam, LPARAM lParam);
     void KeyDown(WPARAM key);
     void EnsureVisible(size_t level, int row);
@@ -184,6 +188,7 @@ private:
     void ChildTimerElapsed();
     void WindowDestroyed(HWND window);
     int UpdateAccessibility(size_t level);
+    void UpdateRegion(HWND window);
     void Paint(HWND window);
 
     friend LRESULT PopupProcImpl(HWND, UINT, WPARAM, LPARAM);
@@ -242,6 +247,7 @@ bool PopupController::CreateLevel(const std::vector<MenuItem>& items, RECT ancho
         levels_.pop_back();
         return false;
     }
+    UpdateRegion(raw->window);
     int focusedChild{};
     internal::RegisterMenuAccessibility(raw->window, AccessibleItems(*raw, focusedChild));
     return true;
@@ -425,6 +431,17 @@ void PopupController::MouseMove(HWND window, LPARAM lParam) {
 void PopupController::MouseUp(HWND window, LPARAM lParam) {
     POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     ClientToScreen(window, &point);
+    PointerUp(MAKELPARAM(point.x, point.y));
+}
+
+void PopupController::DismissOutside(HWND window, LPARAM lParam) {
+    POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+    ClientToScreen(window, &point);
+    if (!InsideChain(point)) Cancel();
+}
+
+void PopupController::PointerUp(LPARAM lParam) {
+    const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     const auto [level, row] = HitTest(point);
     if (level != static_cast<size_t>(-1) && row >= 0) Activate(level, row);
     else if (!InsideChain(point)) Cancel();
@@ -472,7 +489,13 @@ void PopupController::KeyDown(WPARAM key) {
         if (current.selected >= 0) OpenChild(level, current.selected, true);
         break;
     case VK_LEFT:
-        if (level) CloseFrom(level);
+        if (level) {
+            CloseFrom(level);
+            const auto focusedChild = UpdateAccessibility(level - 1);
+            if (focusedChild)
+                internal::NotifyAccessibility(levels_[level - 1]->window,
+                                                EVENT_OBJECT_FOCUS, focusedChild);
+        }
         break;
     case VK_RETURN:
     case VK_SPACE:
@@ -530,6 +553,20 @@ int PopupController::UpdateAccessibility(size_t level) {
     auto items = AccessibleItems(*levels_[level], focusedChild);
     internal::UpdateMenuAccessibility(levels_[level]->window, std::move(items), focusedChild);
     return focusedChild;
+}
+
+void PopupController::UpdateRegion(HWND window) {
+    RECT bounds{};
+    if (!GetClientRect(window, &bounds)) return;
+    const int width = bounds.right - bounds.left;
+    const int height = bounds.bottom - bounds.top;
+    const auto style = MenuColors(appearance_).style;
+    const int radius = (std::max)(
+        0, (std::min)({DipToPx(style.cornerRadiusDip, paint::Dpi(window)), width / 2, height / 2}));
+    const auto region = radius ? CreateRoundRectRgn(0, 0, width + 1, height + 1,
+                                                    radius * 2, radius * 2)
+                               : nullptr;
+    if (!SetWindowRgn(window, region, TRUE) && region) DeleteObject(region);
 }
 
 void DrawCheck(Gdiplus::Graphics& graphics, RECT bounds, Color color, float width) {
@@ -665,6 +702,13 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     case WM_LBUTTONUP:
         if (controller) controller->MouseUp(window, lParam);
         return 0;
+    case WM_RBUTTONUP:
+    case WM_MBUTTONUP:
+        if (controller) controller->DismissOutside(window, lParam);
+        return 0;
+    case WM_POINTERUP:
+        if (controller) controller->PointerUp(lParam);
+        return 0;
     case WM_MOUSEWHEEL:
         if (controller) controller->MouseWheel(window, wParam, lParam);
         return 0;
@@ -693,6 +737,16 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_ERASEBKGND:
         return 1;
+    case WM_SIZE:
+        if (controller) controller->UpdateRegion(window);
+        return 0;
+    case WM_DPICHANGED:
+        if (const auto* suggested = reinterpret_cast<RECT*>(lParam))
+            SetWindowPos(window, nullptr, suggested->left, suggested->top,
+                         suggested->right - suggested->left, suggested->bottom - suggested->top,
+                         SWP_NOACTIVATE | SWP_NOZORDER);
+        if (controller) controller->UpdateRegion(window);
+        return 0;
     case WM_GETOBJECT:
         if (controller) {
             LRESULT result{};

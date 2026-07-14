@@ -34,6 +34,7 @@ struct AccessibleMenuItem {
     bool enabled{};
     bool checked{};
     bool hasPopup{};
+    bool offscreen{};
 };
 
 inline constexpr UINT MenuActivateAccessibleMessage = WM_APP + 0x58B;
