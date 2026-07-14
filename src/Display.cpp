@@ -59,19 +59,22 @@ RECT LabelTextBounds(HDC dc, RECT bounds, HFONT font, const ResolvedStyle& style
                      unsigned dpi, std::wstring_view text) {
     const int paddingX = (std::max)(0, DipToPx(style.paddingXDip, dpi));
     const int paddingY = (std::max)(0, DipToPx(style.paddingYDip, dpi));
-    RECT content{bounds.left + paddingX, bounds.top + paddingY,
-                 (std::max)(bounds.left + paddingX, bounds.right - paddingX),
-                 (std::max)(bounds.top + paddingY, bounds.bottom - paddingY)};
-    RECT measured{0, 0, content.right - content.left, 0};
+    const int contentLeft = bounds.left + paddingX;
+    const int contentRight = (std::max)(contentLeft, static_cast<int>(bounds.right) - paddingX);
+    RECT measured{0, 0, contentRight - contentLeft, 0};
     const auto old = font ? SelectObject(dc, font) : nullptr;
     DrawTextW(dc, text.data(), static_cast<int>(text.size()), &measured,
               DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
     if (old) SelectObject(dc, old);
-    const int height = (std::min)(measured.bottom - measured.top,
-                                  content.bottom - content.top);
-    content.top += (content.bottom - content.top - height) / 2;
-    content.bottom = content.top + height;
-    return content;
+    const int measuredHeight = (std::max)(0, static_cast<int>(measured.bottom - measured.top));
+    const int controlHeight = (std::max)(0, static_cast<int>(bounds.bottom - bounds.top));
+    const int paddedHeight = (std::max)(0, controlHeight - paddingY * 2);
+    const bool fitsPadding = measuredHeight <= paddedHeight;
+    const int top = fitsPadding ? bounds.top + paddingY : bounds.top;
+    const int availableHeight = fitsPadding ? paddedHeight : controlHeight;
+    const int height = (std::min)(measuredHeight, availableHeight);
+    const int centeredTop = top + (availableHeight - height) / 2;
+    return {contentLeft, centeredTop, contentRight, centeredTop + height};
 }
 
 void PaintDisplay(HWND window, const DisplayState& state) {

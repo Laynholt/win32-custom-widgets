@@ -2,6 +2,7 @@
 #include <wcw/Runtime.h>
 #include <wcw/Theme.h>
 
+#include <dwmapi.h>
 #include <windows.h>
 #include <windowsx.h>
 
@@ -58,6 +59,13 @@ SIZE OuterSizeForClient(float widthDip, float heightDip, UINT dpi) {
 void MoveWindowDip(HWND window, float x, float y, float width, float height) {
     const auto parent = GetParent(window);
     MoveWindow(window, Px(parent, x), Px(parent, y), Px(parent, width), Px(parent, height), TRUE);
+}
+
+void ApplyDarkTitleBar(HWND window) {
+    const BOOL dark = TRUE;
+    const COLORREF black = RGB(0, 0, 0);
+    DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    DwmSetWindowAttribute(window, DWMWA_CAPTION_COLOR, &black, sizeof(black));
 }
 
 wcw::ControlOptions Base(HWND parent, int id, std::wstring text, std::wstring name = {}) {
@@ -389,6 +397,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         wcw::Shutdown();
         return 3;
     }
+    ApplyDarkTitleBar(window);
     const auto initial = OuterSizeForClient(InitialClientWidthDip, InitialClientHeightDip,
                                             GetDpiForWindow(window));
     SetWindowPos(window, nullptr, 0, 0, initial.cx, initial.cy,

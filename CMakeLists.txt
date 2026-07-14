@@ -18,7 +18,7 @@ target_link_libraries(Win32CustomWidgets PUBLIC user32 gdi32 gdiplus comctl32 ol
 option(WCW_BUILD_DEMO "Build the Win32 Custom Widgets gallery" ${PROJECT_IS_TOP_LEVEL})
 if(WCW_BUILD_DEMO)
     add_executable(Win32CustomWidgetsDemo WIN32 demo/main.cpp)
-    target_link_libraries(Win32CustomWidgetsDemo PRIVATE Win32CustomWidgets::Win32CustomWidgets)
+    target_link_libraries(Win32CustomWidgetsDemo PRIVATE Win32CustomWidgets::Win32CustomWidgets dwmapi)
     set_target_properties(Win32CustomWidgetsDemo PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 endif()
 
