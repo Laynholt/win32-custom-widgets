@@ -46,6 +46,21 @@ void PumpTimersFor(HWND window, DWORD milliseconds) {
     } while (GetTickCount64() < end);
 }
 
+bool WaitForUpdate(HWND window, DWORD timeoutMilliseconds = 1000) {
+    const auto deadline = GetTickCount64() + timeoutMilliseconds;
+    while (GetUpdateRect(window, nullptr, FALSE) == FALSE) {
+        MSG message{};
+        while (PeekMessageW(&message, window, WM_TIMER, WM_TIMER, PM_REMOVE)) {
+            DispatchMessageW(&message);
+            if (GetUpdateRect(window, nullptr, FALSE) != FALSE) return true;
+        }
+        const auto now = GetTickCount64();
+        if (now >= deadline) break;
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, static_cast<DWORD>(deadline - now), QS_TIMER);
+    }
+    return GetUpdateRect(window, nullptr, FALSE) != FALSE;
+}
+
 } // namespace
 
 int main() {
@@ -174,7 +189,7 @@ int main() {
     ShowWindow(progress, SW_SHOWNOACTIVATE);
     CHECK(wcw::SetProgressIndeterminate(progress, true));
     ValidateRect(progress, nullptr);
-    PumpTimersFor(progress, 40);
+    CHECK(WaitForUpdate(progress));
     CHECK(GetUpdateRect(progress, nullptr, FALSE) != FALSE);
     UpdateWindow(progress);
     ShowWindow(parent, SW_HIDE);
@@ -183,7 +198,7 @@ int main() {
     CHECK(GetUpdateRect(progress, nullptr, FALSE) == FALSE);
     ShowWindow(parent, SW_SHOWNOACTIVATE);
     ValidateRect(progress, nullptr);
-    PumpTimersFor(progress, 40);
+    CHECK(WaitForUpdate(progress));
     CHECK(GetUpdateRect(progress, nullptr, FALSE) != FALSE);
     UpdateWindow(progress);
     ShowWindow(progress, SW_HIDE);

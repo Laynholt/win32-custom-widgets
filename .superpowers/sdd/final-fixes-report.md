@@ -243,3 +243,23 @@ rtk proxy ctest --test-dir build-pointer-hook-release -C Release --output-on-fai
 100% tests passed, 0 tests failed out of 12
 Total Test time (real) = 38.07 sec
 ```
+
+## Condition-based progress invalidation test
+
+The next clean current-HEAD Debug suite exposed the existing `ValueControlsTests` timing assumption at the two positive indeterminate-progress checks. Both checks validated the window, pumped timer messages for a fixed 40 ms, and then required `GetUpdateRect` to report an invalid region. An unchanged-binary stress run reproduced the failure ten times in one hundred runs at the original assertions (lines 178 and 187), including one run where both checks failed.
+
+CodeGraph tracing confirmed that production starts a 16 ms timer whenever the indeterminate progress bar is enabled and visible. Its `WM_TIMER` handler advances the animation and calls `InvalidateRect`; no production defect was found. The flake occurs when Windows does not synthesize and dispatch the low-priority timer message before the fixed wall-clock loop expires under load.
+
+Only `tests/test_value_controls.cpp` changed. A bounded `WaitForUpdate` helper now polls the actual update region, dispatches only the target window's timer messages, and waits for timer input with `MsgWaitForMultipleObjects` for at most one second. `GetUpdateRect(..., FALSE)` does not consume the update region, and the original strict `GetUpdateRect` assertions remain immediately after the helper, so the awaited condition is not cleared before verification. The negative hidden/disabled checks retain their observation interval. No production code changed.
+
+The rebuilt focused Debug test passed once and then passed one hundred consecutive stress runs (`failures=0`), compared with ten failures in the unchanged one-hundred-run RED stress. Fresh x64 Debug and Release trees were then configured, completely built, and tested sequentially:
+
+```text
+rtk proxy ctest --test-dir build-value-wait-debug -C Debug --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 34.67 sec
+
+rtk proxy ctest --test-dir build-value-wait-release -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 39.66 sec
+```
