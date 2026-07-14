@@ -19,6 +19,7 @@ void RegisterWindow(HWND window);
 void UnregisterWindow(HWND window);
 bool IsLibraryWindow(HWND window, const wchar_t* className = nullptr);
 StyleOverride WindowStyleOverride(HWND window);
+bool WindowRegionContainsScreenPoint(HWND window, POINT screen);
 
 inline StyleOverride OverlayStyle(StyleOverride result, const StyleOverride& local) {
 #define WCW_OVERLAY(member) if (local.member) result.member = local.member

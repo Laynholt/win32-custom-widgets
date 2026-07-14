@@ -284,6 +284,8 @@ bool PopupController::Run() {
     }
 
     MSG message{};
+    MSG deferredMessage{};
+    bool dispatchDeferred{};
     while (!done_) {
         const auto result = GetMessageW(&message, nullptr, 0, 0);
         if (result <= 0) {
@@ -293,7 +295,12 @@ bool PopupController::Run() {
         }
         if (message.message == WM_POINTERDOWN || message.message == WM_POINTERUP) {
             const POINT point{GET_X_LPARAM(message.lParam), GET_Y_LPARAM(message.lParam)};
-            if (!InsideChain(point)) Cancel();
+            if (!InsideChain(point)) {
+                Cancel();
+                deferredMessage = message;
+                dispatchDeferred = true;
+                break;
+            }
         }
         TranslateMessage(&message);
         DispatchMessageW(&message);
@@ -311,6 +318,10 @@ bool PopupController::Run() {
         SetCapture(replacementCapture);
     if (IsWindow(previousFocus_)) SetFocus(previousFocus_);
     activeController = nullptr;
+    if (dispatchDeferred) {
+        TranslateMessage(&deferredMessage);
+        DispatchMessageW(&deferredMessage);
+    }
     return shown_;
 }
 
@@ -386,7 +397,7 @@ std::pair<size_t, int> PopupController::HitTest(POINT screen) const {
     for (size_t level = levels_.size(); level-- > 0;) {
         RECT bounds{};
         if (!levels_[level]->window || !GetWindowRect(levels_[level]->window, &bounds) ||
-            !Contains(bounds, screen))
+            !internal::WindowRegionContainsScreenPoint(levels_[level]->window, screen))
             continue;
         for (int row = 0; row < static_cast<int>(levels_[level]->rows.size()); ++row) {
             auto rowBounds = levels_[level]->rows[row];
@@ -401,8 +412,7 @@ std::pair<size_t, int> PopupController::HitTest(POINT screen) const {
 
 bool PopupController::InsideChain(POINT screen) const {
     for (const auto& level : levels_) {
-        RECT bounds{};
-        if (level->window && GetWindowRect(level->window, &bounds) && Contains(bounds, screen))
+        if (level->window && internal::WindowRegionContainsScreenPoint(level->window, screen))
             return true;
     }
     return false;

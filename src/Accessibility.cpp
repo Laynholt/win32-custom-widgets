@@ -374,6 +374,7 @@ public:
             const auto ready = Ready();
             if (FAILED(ready)) return ready;
             if (!child) return E_POINTER;
+            if (!WindowRegionContainsScreenPoint(window_, {x, y})) return S_FALSE;
             for (size_t index = 0; index < info_.menuItems.size(); ++index) {
                 const auto& item = info_.menuItems[index];
                 if (!item.offscreen && x >= item.screenBounds.left && x < item.screenBounds.right &&
@@ -383,13 +384,9 @@ public:
                     return S_OK;
                 }
             }
-            RECT bounds{};
-            if (GetWindowRect(window_, &bounds) && x >= bounds.left && x < bounds.right &&
-                y >= bounds.top && y < bounds.bottom) {
-                child->vt = VT_I4;
-                child->lVal = CHILDID_SELF;
-                return S_OK;
-            }
+            child->vt = VT_I4;
+            child->lVal = CHILDID_SELF;
+            return S_OK;
         }
         return Forward([&] { return standard_->accHitTest(x, y, child); });
     }

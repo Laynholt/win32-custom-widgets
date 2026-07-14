@@ -209,6 +209,20 @@ StyleOverride WindowStyleOverride(HWND window) {
     return found == State().overrides.end() ? StyleOverride{} : found->second;
 }
 
+bool WindowRegionContainsScreenPoint(HWND window, POINT screen) {
+    RECT bounds{};
+    if (!GetWindowRect(window, &bounds) || !PtInRect(&bounds, screen)) return false;
+    POINT client = screen;
+    if (!ScreenToClient(window, &client)) return true;
+    const auto region = CreateRectRgn(0, 0, 0, 0);
+    if (!region) return true;
+    const auto type = GetWindowRgn(window, region);
+    const bool contains = type == ERROR ||
+                          (type != NULLREGION && PtInRegion(region, client.x, client.y));
+    DeleteObject(region);
+    return contains;
+}
+
 bool HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                           LRESULT& result) {
     if (HandleAccessibilityMessage(window, message, wParam, lParam, result)) return true;

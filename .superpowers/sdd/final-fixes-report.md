@@ -165,3 +165,41 @@ Total Test time (real) = 11.48 sec
 ```
 
 The first Release suite and its first isolated retry encountered the same unchanged `ValueControlsTests` 40 ms `GetUpdateRect` timing flake noted above. The next isolated run passed, followed by the clean complete Release result recorded here. `MenuTests` passed in every GREEN/full-suite run.
+
+## Final routing and region follow-up
+
+Two findings remaining after commit `b9d9328` were handled with another RED/GREEN cycle.
+
+### Dispatch only after complete teardown
+
+An outside queued pointer message is now copied and removed from the nested loop without immediate dispatch. The controller then releases/restores capture, destroys the full popup hierarchy, removes the owner subclass, restores focus, and clears `activeController`. Only after that cleanup does it translate and dispatch the saved external message.
+
+The genuine touch-injection regression makes the separate target window synchronously call `ShowContextMenu` from its pointer handler. It asserts that the original popup no longer exists, the replacement does not fail with `ERROR_BUSY`, and a controlled timer safely closes the replacement. The existing `WM_QUIT` test remains unchanged and passes; quit messages are not deferred because `GetMessageW` returns zero before pointer-message handling.
+
+### Rounded-region containment
+
+A shared internal helper now checks the screen rectangle, converts the point to window coordinates, and queries the actual window region. A missing/error region falls back to rectangular containment, while an empty region contains no points. The helper is reused by popup hierarchy containment, menu row hit-testing, and menu MSAA hit-testing.
+
+The regressions place the separate pointer target immediately behind a rounded popup and inject a real contact at the visually clipped top-left corner. They verify that the contact dismisses the menu and is still delivered to the target. The accessibility regression verifies that `accHitTest` returns `S_FALSE`/`VT_EMPTY` for the same clipped corner.
+
+### RED/GREEN and final verification
+
+In the test-only RED state, focused Release `MenuTests` failed only on the intended observations:
+
+- MSAA returned the menu self for the clipped corner instead of `S_FALSE`/`VT_EMPTY`;
+- the pointer target saw the original popup still alive, and synchronous replacement opening returned `ERROR_BUSY`;
+- the real clipped-corner contact reached the target but required the fallback timer to close the menu.
+
+After the production changes, focused Release `MenuTests` exited `0`. Fresh x64 Debug and Release trees were configured, completely built, and tested sequentially:
+
+```text
+rtk proxy ctest --test-dir build-review2-debug -C Debug --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 36.86 sec
+
+rtk proxy ctest --test-dir build-review2-release -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 9.67 sec
+```
+
+The first Release run encountered an unrelated `ButtonDisplayTests` `chevronPixel` visual sampling failure. It passed immediately in isolation and in the complete clean rerun above. `MenuTests` passed in every GREEN and full-suite run.

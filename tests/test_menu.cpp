@@ -26,6 +26,11 @@ HWND pointerTarget{};
 int menuButtonId{};
 int buttonIdCommands{};
 int pointerMessages{};
+bool openReplacementOnPointer{};
+bool pointerPopupClosed{};
+bool pointerReplacementShown{};
+DWORD pointerReplacementError{};
+POINT clippedCorner{};
 bool destroyCommandSource{};
 bool dismissFallback{};
 bool leftFocusNotified{};
@@ -103,18 +108,32 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
+void CALLBACK ClosePointerReplacement(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
 LRESULT CALLBACK PointerTargetProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == WM_POINTERDOWN || message == WM_POINTERUP) {
         ++pointerMessages;
+        if (openReplacementOnPointer) {
+            openReplacementOnPointer = false;
+            pointerPopupClosed = Popup() == nullptr;
+            SetTimer(window, 138, 1, ClosePointerReplacement);
+            SetLastError(ERROR_SUCCESS);
+            const wcw::ContextMenuOptions replacement{{{.id = 901, .text = L"Replacement"}}};
+            pointerReplacementShown = wcw::ShowContextMenu(window, {80, 80}, replacement);
+            pointerReplacementError = GetLastError();
+            KillTimer(window, 138);
+        }
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-POINTER_TOUCH_INFO OutsideTouch(DWORD flags) {
-    RECT bounds{};
-    CHECK(GetWindowRect(pointerTarget, &bounds));
-    const POINT point{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+POINTER_TOUCH_INFO TouchAt(POINT point, DWORD flags) {
     CHECK(WindowFromPoint(point) == pointerTarget);
     POINTER_TOUCH_INFO touch{};
     touch.pointerInfo.pointerType = PT_TOUCH;
@@ -128,9 +147,15 @@ POINTER_TOUCH_INFO OutsideTouch(DWORD flags) {
     return touch;
 }
 
-void InjectOutsideTouch(DWORD flags) {
-    auto touch = OutsideTouch(flags);
+void InjectTouchAt(POINT point, DWORD flags) {
+    auto touch = TouchAt(point, flags);
     CHECK(InjectTouchInput(1, &touch));
+}
+
+void InjectOutsideTouch(DWORD flags) {
+    RECT bounds{};
+    CHECK(GetWindowRect(pointerTarget, &bounds));
+    InjectTouchAt({(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2}, flags);
 }
 
 void PumpMessages() {
@@ -349,6 +374,12 @@ void CALLBACK InspectAccessibility(HWND owner, UINT, UINT_PTR timer, DWORD) {
         CHECK(hit.lVal == 1);
         VariantClear(&hit);
 
+        RECT popupBounds{};
+        CHECK(GetWindowRect(popup, &popupBounds));
+        CHECK(accessible->accHitTest(popupBounds.left, popupBounds.top, &hit) == S_FALSE);
+        CHECK(hit.vt == VT_EMPTY);
+        VariantClear(&hit);
+
         BSTR action{};
         CHECK(accessible->get_accDefaultAction(Child(1), &action) == S_OK);
         CHECK(action && wcscmp(action, L"Open") == 0);
@@ -423,10 +454,25 @@ void CALLBACK DismissOutside(HWND owner, UINT, UINT_PTR timer, DWORD) {
 
 void CALLBACK InjectOutsidePointer(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
-    SetTimer(owner, timer + 100, 30, DismissFallback);
+    SetTimer(owner, timer + 100, timer == 35 ? 200 : 30, DismissFallback);
     InjectOutsideTouch(timer == 35 ? POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE |
                                         POINTER_FLAG_INCONTACT
                                   : POINTER_FLAG_UP);
+}
+
+void CALLBACK InjectClippedCorner(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    RECT bounds{};
+    CHECK(GetWindowRect(popup, &bounds));
+    clippedCorner = {bounds.left, bounds.top};
+    CHECK(SetWindowPos(pointerTarget, popup, clippedCorner.x - 5, clippedCorner.y - 5,
+                       20, 20, SWP_NOACTIVATE));
+    CHECK(WindowFromPoint(clippedCorner) == pointerTarget);
+    SetTimer(owner, timer + 100, 30, DismissFallback);
+    InjectTouchAt(clippedCorner, POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE |
+                                     POINTER_FLAG_INCONTACT);
 }
 
 void CALLBACK ChangePopupDpi(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -795,11 +841,18 @@ int main() {
     }
     dismissFallback = false;
     pointerMessages = 0;
+    openReplacementOnPointer = true;
+    pointerPopupClosed = false;
+    pointerReplacementShown = false;
+    pointerReplacementError = ERROR_SUCCESS;
     SetTimer(parent, 35, 1, InjectOutsidePointer);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
     KillTimer(parent, 135);
     CHECK(!dismissFallback);
     CHECK(pointerMessages == 1);
+    CHECK(pointerPopupClosed);
+    CHECK(pointerReplacementShown);
+    CHECK(pointerReplacementError != ERROR_BUSY);
     CHECK(Popup() == nullptr);
     InjectOutsideTouch(POINTER_FLAG_UP);
     PumpPointerMessages(2);
@@ -815,6 +868,19 @@ int main() {
     CHECK(!dismissFallback);
     CHECK(pointerMessages == 2);
     CHECK(Popup() == nullptr);
+
+    dismissFallback = false;
+    pointerMessages = 0;
+    SetTimer(parent, 39, 1, InjectClippedCorner);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, accessibleMenu));
+    KillTimer(parent, 139);
+    CHECK(!dismissFallback);
+    CHECK(pointerMessages == 1);
+    CHECK(Popup() == nullptr);
+    InjectTouchAt(clippedCorner, POINTER_FLAG_UP);
+    PumpPointerMessages(2);
+    CHECK(SetWindowPos(pointerTarget, HWND_TOPMOST, 500, 500, 40, 40, SWP_NOACTIVATE));
+
     dismissFallback = false;
     SetTimer(parent, 37, 1, ChangePopupDpi);
     CHECK(wcw::ShowContextMenu(parent, {20, 20}, menu));
