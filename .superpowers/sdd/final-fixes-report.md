@@ -203,3 +203,23 @@ Total Test time (real) = 9.67 sec
 ```
 
 The first Release run encountered an unrelated `ButtonDisplayTests` `chevronPixel` visual sampling failure. It passed immediately in isolation and in the complete clean rerun above. `MenuTests` passed in every GREEN and full-suite run.
+
+## Deterministic menu-button pixel capture
+
+The remaining `ButtonDisplayTests` flake came from sampling a visible window twice with `GetDC`: one scan established the foreground bounds and a second scan searched separately for text and chevron pixels. Those live-window reads could observe compositor/occlusion timing instead of one stable rendered frame.
+
+The unchanged Release binary reproduced the failure under a ten-run stress loop: run 2 failed at the existing `CHECK(chevronPixel)` while the other nine runs passed. This established a focused RED before changing the test.
+
+Only `tests/test_button_display.cpp` changed. The menu-button check now creates a top-down 32-bit DIB, selects it into a compatible memory DC, and uses `PrintWindow(..., PW_CLIENTONLY)` to synchronously request the client rendering. A direct `WM_PRINTCLIENT` experiment left the sentinel bitmap untouched because the custom button class has no explicit handler; the `PrintWindow` client path provides the corresponding capture without adding test-only behavior to the production widget. Both the foreground-bounds scan and the chevron/text scan use that single off-screen DC. The strict `chevronPixel` and `textRight < chevronArea.left` assertions are unchanged, and no sleeps were added.
+
+The modified focused Release test then passed ten consecutive runs. Fresh x64 Debug and Release trees were configured, completely built, and tested sequentially:
+
+```text
+rtk proxy ctest --test-dir build-button-capture-debug -C Debug --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 35.82 sec
+
+rtk proxy ctest --test-dir build-button-capture-release -C Release --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 41.28 sec
+```

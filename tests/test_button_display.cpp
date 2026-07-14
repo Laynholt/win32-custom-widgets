@@ -78,13 +78,9 @@ HBITMAP TestBitmap() {
     return bitmap;
 }
 
-RECT ForegroundBounds(HWND window, COLORREF background, COLORREF foreground) {
-    RECT client{};
-    GetClientRect(window, &client);
+RECT ForegroundBounds(HDC dc, RECT client, COLORREF background, COLORREF foreground) {
     RECT bounds{client.right, client.bottom, 0, 0};
     bool found{};
-    const auto dc = GetDC(window);
-    if (!dc) return {};
     for (int y = client.top; y < client.bottom; ++y) {
         for (int x = client.left; x < client.right; ++x) {
             const auto pixel = GetPixel(dc, x, y);
@@ -109,8 +105,40 @@ RECT ForegroundBounds(HWND window, COLORREF background, COLORREF foreground) {
             bounds.bottom = (std::max)(bounds.bottom, static_cast<LONG>(y + 1));
         }
     }
-    ReleaseDC(window, dc);
     return found ? bounds : RECT{};
+}
+
+RECT ForegroundBounds(HWND window, COLORREF background, COLORREF foreground) {
+    RECT client{};
+    GetClientRect(window, &client);
+    const auto dc = GetDC(window);
+    if (!dc) return {};
+    const auto bounds = ForegroundBounds(dc, client, background, foreground);
+    ReleaseDC(window, dc);
+    return bounds;
+}
+
+HBITMAP CaptureClient(HWND window, HDC& dc, HGDIOBJ& previous) {
+    RECT client{};
+    CHECK(GetClientRect(window, &client));
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = client.right;
+    info.bmiHeader.biHeight = -client.bottom;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits{};
+    const auto bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    dc = CreateCompatibleDC(nullptr);
+    CHECK(bitmap != nullptr);
+    CHECK(dc != nullptr);
+    if (!bitmap || !dc) return bitmap;
+    previous = SelectObject(dc, bitmap);
+    CHECK(previous != nullptr && previous != HGDI_ERROR);
+    PatBlt(dc, 0, 0, client.right, client.bottom, WHITENESS);
+    CHECK(PrintWindow(window, dc, PW_CLIENTONLY));
+    return bitmap;
 }
 
 void CheckBuiltinIconPixels(HWND window) {
@@ -442,16 +470,16 @@ int main() {
                        RDW_INVALIDATE | RDW_UPDATENOW) != FALSE);
     RECT menuClient{};
     GetClientRect(renderedMenuButton, &menuClient);
-    const auto menuForeground = ForegroundBounds(
-        renderedMenuButton, RGB(0, 0, 0), RGB(255, 255, 255));
-    CHECK(!IsRectEmpty(&menuForeground));
     const auto dpi = GetDpiForWindow(renderedMenuButton);
     const int padding = wcw::DipToPx(10.0f, dpi);
     const int chevronWidth = wcw::DipToPx(16.0f, dpi);
     const RECT chevronArea{menuClient.right - padding - chevronWidth, menuClient.top,
                            menuClient.right - padding, menuClient.bottom};
-    const auto dc = GetDC(renderedMenuButton);
-    CHECK(dc != nullptr);
+    HDC dc{};
+    HGDIOBJ previous{};
+    const auto printed = CaptureClient(renderedMenuButton, dc, previous);
+    const auto menuForeground = ForegroundBounds(dc, menuClient, RGB(0, 0, 0), RGB(255, 255, 255));
+    CHECK(!IsRectEmpty(&menuForeground));
     bool chevronPixel{};
     LONG textRight{};
     if (dc) {
@@ -470,8 +498,10 @@ int main() {
                 else textRight = (std::max)(textRight, static_cast<LONG>(x + 1));
             }
         }
-        ReleaseDC(renderedMenuButton, dc);
+        SelectObject(dc, previous);
+        DeleteDC(dc);
     }
+    DeleteObject(printed);
     CHECK(chevronPixel);
     CHECK(textRight < chevronArea.left);
 
