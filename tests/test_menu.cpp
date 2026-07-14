@@ -64,6 +64,8 @@ int main() {
                    {180, 100, 340, 220}));
     CHECK(SameRect(wcw::internal::PlaceSubmenu({700, 400, 780, 432}, {160, 120}, work),
                    {540, 400, 700, 520}));
+    CHECK(SameRect(wcw::internal::PlaceSubmenu({100, 500, 180, 532}, {160, 120}, work),
+                   {180, 480, 340, 600}));
 
     return testFailures;
 }

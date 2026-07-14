@@ -64,7 +64,6 @@ RECT PlaceSubmenu(RECT parentRow, SIZE popup, RECT workArea) {
     int left = parentRow.right;
     int top = parentRow.top;
     if (left + popup.cx > workArea.right) left = parentRow.left - popup.cx;
-    if (top + popup.cy > workArea.bottom) top = parentRow.bottom - popup.cy;
     left = ClampStart(left, workArea.left, workArea.right, popup.cx);
     top = ClampStart(top, workArea.top, workArea.bottom, popup.cy);
     return PopupRect(left, top, popup);
