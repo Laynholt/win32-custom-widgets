@@ -1,5 +1,6 @@
 #include "Test.h"
 
+#include "../src/Internal.h"
 #include "../src/MenuModel.h"
 
 #include <wcw/Controls.h>
@@ -18,6 +19,10 @@ LPARAM commandSource;
 bool popupAliveWhenCommand;
 int popupCountAtCommand;
 RECT capturedPopup{};
+HWND menuButton{};
+int menuButtonId{};
+int buttonIdCommands{};
+const std::vector<wcw::MenuItem> replacementMenu{{.id = 302, .text = L"Replacement"}};
 
 bool SameRect(RECT left, RECT right) {
     return left.left == right.left && left.top == right.top &&
@@ -51,6 +56,7 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         commandId = LOWORD(wParam);
         commandCode = HIWORD(wParam);
         commandSource = lParam;
+        if (commandId == menuButtonId) ++buttonIdCommands;
         popupAliveWhenCommand = Popup() != nullptr;
         popupCountAtCommand = PopupCount();
     }
@@ -206,6 +212,21 @@ void CALLBACK CapturePopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
     SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
 }
 
+void CALLBACK SelectFirst(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+}
+
+void CALLBACK ReplaceMenu(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    CHECK(Popup() != nullptr);
+    CHECK(SendMessageW(menuButton, wcw::internal::ButtonGetMenuStateMessage, 0, 0) == 3);
+    CHECK(wcw::SetMenuItems(menuButton, replacementMenu));
+}
+
 } // namespace
 
 int main() {
@@ -286,6 +307,74 @@ int main() {
                                         0, 0, 320, 240, nullptr, nullptr, instance, nullptr);
     CHECK(parent != nullptr);
     CHECK(wcw::Initialize(instance));
+
+    menuButtonId = 300;
+    wcw::MenuButtonOptions menuButtonOptions;
+    menuButtonOptions.parent = parent;
+    menuButtonOptions.id = menuButtonId;
+    menuButtonOptions.bounds = {10, 10, 140, 36};
+    menuButtonOptions.text = L"Actions";
+    menuButtonOptions.items = {{.id = 301, .text = L"First"},
+                               {.id = 303, .text = L"Second"}};
+    menuButton = wcw::CreateMenuButton(menuButtonOptions);
+    CHECK(menuButton != nullptr);
+    CHECK(SendMessageW(menuButton, wcw::internal::ButtonGetMenuStateMessage, 0, 0) == 1);
+
+    ResetCommand();
+    buttonIdCommands = 0;
+    SetTimer(parent, 18, 1, SelectFirst);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    CHECK(commandId == 301);
+    CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(buttonIdCommands == 0);
+    CHECK(SendMessageW(menuButton, wcw::internal::ButtonGetMenuStateMessage, 0, 0) == 1);
+
+    ResetCommand();
+    SetTimer(parent, 19, 1, ReplaceMenu);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    CHECK(commandId == 0);
+    CHECK(buttonIdCommands == 0);
+    CHECK(Popup() == nullptr);
+    CHECK(SendMessageW(menuButton, wcw::internal::ButtonGetMenuStateMessage, 0, 0) == 1);
+
+    SetTimer(parent, 20, 1, SelectFirst);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    CHECK(commandId == 302);
+    CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(buttonIdCommands == 0);
+
+    ResetCommand();
+    SetTimer(parent, 21, 1, SelectFirst);
+    SendMessageW(menuButton, WM_KEYDOWN, VK_DOWN, 0);
+    CHECK(commandId == 302);
+    CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(buttonIdCommands == 0);
+
+    ResetCommand();
+    SetTimer(parent, 22, 1, SelectFirst);
+    SendMessageW(menuButton, WM_SYSKEYDOWN, VK_DOWN, 1 << 29);
+    CHECK(commandId == 302);
+    CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(buttonIdCommands == 0);
+
+    wcw::ButtonOptions normalButtonOptions;
+    normalButtonOptions.parent = parent;
+    normalButtonOptions.id = 304;
+    normalButtonOptions.bounds = {10, 50, 140, 36};
+    normalButtonOptions.text = L"Normal";
+    const auto normalButton = wcw::CreateButton(normalButtonOptions);
+    CHECK(normalButton != nullptr);
+    SetLastError(ERROR_SUCCESS);
+    CHECK(!wcw::SetMenuItems(normalButton, replacementMenu));
+    CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
+    SetLastError(ERROR_SUCCESS);
+    CHECK(!wcw::SetMenuItems(menuButton, zeroId));
+    CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
+    auto invalidMenuButtonOptions = menuButtonOptions;
+    invalidMenuButtonOptions.items = zeroId;
+    SetLastError(ERROR_SUCCESS);
+    CHECK(wcw::CreateMenuButton(invalidMenuButtonOptions) == nullptr);
+    CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
 
     SetLastError(ERROR_SUCCESS);
     const wcw::ContextMenuOptions invalidOptions{{{.id = 0, .text = L"Bad"}}};
@@ -452,6 +541,8 @@ int main() {
     CHECK(commandId == 0);
     CHECK(Popup() == nullptr);
 
+    DestroyWindow(normalButton);
+    DestroyWindow(menuButton);
     DestroyWindow(focusWindow);
     wcw::Shutdown();
     DestroyWindow(parent);

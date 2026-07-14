@@ -419,6 +419,59 @@ int main() {
               (std::min)(wrappedText.top, wrappedClient.bottom - wrappedText.bottom) <=
           2);
 
+    wcw::MenuButtonOptions menuButtonOptions;
+    menuButtonOptions.parent = parent;
+    menuButtonOptions.id = 70;
+    menuButtonOptions.bounds = {0, 160, 140, 36};
+    menuButtonOptions.text = L"Menu";
+    menuButtonOptions.appearance = {
+        .background = wcw::Color::FromRgb(0, 0, 0),
+        .foreground = wcw::Color::FromRgb(255, 255, 255),
+        .font = wcw::FontSpec{L"Arial", 14.0f},
+        .paddingXDip = 10.0f,
+        .spacingDip = 6.0f,
+        .cornerRadiusDip = 0.0f,
+    };
+    menuButtonOptions.items = {{.id = 701, .text = L"Item"}};
+    const auto renderedMenuButton = wcw::CreateMenuButton(menuButtonOptions);
+    CHECK(renderedMenuButton != nullptr);
+    ShowWindow(renderedMenuButton, SW_SHOWNOACTIVATE);
+    CHECK(RedrawWindow(renderedMenuButton, nullptr, nullptr,
+                       RDW_INVALIDATE | RDW_UPDATENOW) != FALSE);
+    RECT menuClient{};
+    GetClientRect(renderedMenuButton, &menuClient);
+    const auto menuForeground = ForegroundBounds(
+        renderedMenuButton, RGB(0, 0, 0), RGB(255, 255, 255));
+    CHECK(!IsRectEmpty(&menuForeground));
+    const auto dpi = GetDpiForWindow(renderedMenuButton);
+    const int padding = wcw::DipToPx(10.0f, dpi);
+    const int chevronWidth = wcw::DipToPx(16.0f, dpi);
+    const RECT chevronArea{menuClient.right - padding - chevronWidth, menuClient.top,
+                           menuClient.right - padding, menuClient.bottom};
+    const auto dc = GetDC(renderedMenuButton);
+    CHECK(dc != nullptr);
+    bool chevronPixel{};
+    LONG textRight{};
+    if (dc) {
+        for (int y = menuClient.top; y < menuClient.bottom; ++y) {
+            for (int x = menuClient.left; x < menuClient.right; ++x) {
+                const auto pixel = GetPixel(dc, x, y);
+                const int backgroundDistance = GetRValue(pixel) * GetRValue(pixel) +
+                                               GetGValue(pixel) * GetGValue(pixel) +
+                                               GetBValue(pixel) * GetBValue(pixel);
+                const int foregroundDistance = (255 - GetRValue(pixel)) * (255 - GetRValue(pixel)) +
+                                               (255 - GetGValue(pixel)) * (255 - GetGValue(pixel)) +
+                                               (255 - GetBValue(pixel)) * (255 - GetBValue(pixel));
+                if (foregroundDistance >= backgroundDistance) continue;
+                if (x >= chevronArea.left && x < chevronArea.right) chevronPixel = true;
+                else textRight = (std::max)(textRight, static_cast<LONG>(x + 1));
+            }
+        }
+        ReleaseDC(renderedMenuButton, dc);
+    }
+    CHECK(chevronPixel);
+    CHECK(textRight < chevronArea.left);
+
     DestroyWindow(defaultButton);
     DestroyWindow(cancelButton);
     DestroyWindow(dialogDefault);
@@ -426,6 +479,7 @@ int main() {
     DestroyWindow(dialog);
     DestroyWindow(paddedLabel);
     DestroyWindow(wrappedLabel);
+    DestroyWindow(renderedMenuButton);
     DestroyWindow(stretchedBuiltin);
     for (const auto view : builtinViews) DestroyWindow(view);
     for (const auto control : controls) DestroyWindow(control);

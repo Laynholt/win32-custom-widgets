@@ -4,6 +4,7 @@
 
 #include "Internal.h"
 #include "Accessibility.h"
+#include "MenuModel.h"
 #include "Paint.h"
 
 #include <algorithm>
@@ -18,13 +19,16 @@ constexpr wchar_t ButtonClass[] = L"WcwButton";
 struct ButtonState {
     HICON icon{};
     HBITMAP bitmap{};
-    float iconSizeDip{};
-    UINT alignment{};
+    float iconSizeDip{16};
+    UINT alignment{DT_CENTER};
     bool isDefault{};
     bool isCancel{};
     bool hover{};
     bool mousePressed{};
     WPARAM keyboardPressedKey{};
+    std::vector<MenuItem> menuItems;
+    StyleOverride menuAppearance;
+    bool menuOpen{};
 };
 
 bool Inside(HWND window, LPARAM position) {
@@ -33,8 +37,20 @@ bool Inside(HWND window, LPARAM position) {
     return PtInRect(&bounds, {GET_X_LPARAM(position), GET_Y_LPARAM(position)});
 }
 
-void NotifyClicked(HWND window) {
+void ActivateButton(HWND window, ButtonState& state) {
     if (!IsWindowEnabled(window)) return;
+    if (!state.menuItems.empty()) {
+        if (state.menuOpen) return;
+        RECT anchor{};
+        GetWindowRect(window, &anchor);
+        state.menuOpen = true;
+        InvalidateRect(window, nullptr, FALSE);
+        internal::ShowPopupMenu(GetParent(window), window, anchor, state.menuItems,
+                                state.menuAppearance);
+        state.menuOpen = false;
+        InvalidateRect(window, nullptr, FALSE);
+        return;
+    }
     SendMessageW(GetParent(window), WM_COMMAND,
                  MAKEWPARAM(GetDlgCtrlID(window), BN_CLICKED), reinterpret_cast<LPARAM>(window));
 }
@@ -76,12 +92,18 @@ void PaintButton(HWND window, ButtonState& state) {
         const int padding = DipToPx(style.paddingXDip, dpi);
         InflateRect(&content, -padding, 0);
         const int iconSize = DipToPx(state.iconSizeDip, dpi);
+        const int spacing = DipToPx(style.spacingDip, dpi);
+        RECT chevronBounds{};
+        if (!state.menuItems.empty()) {
+            chevronBounds = {content.right - iconSize, content.top, content.right, content.bottom};
+            content.right -= iconSize + spacing;
+        }
         const bool hasImage = state.icon || state.bitmap;
         const int gap = hasImage && GetWindowTextLengthW(window) ?
-                            DipToPx(style.spacingDip, dpi) : 0;
+                            spacing : 0;
         int imageLeft = content.left;
         if (state.alignment & DT_CENTER)
-            imageLeft = (bounds.right - iconSize - gap -
+            imageLeft = (content.right - iconSize - gap -
                          (GetWindowTextLengthW(window) ? bounds.right / 3 : 0)) / 2;
         else if (state.alignment & DT_RIGHT)
             imageLeft = content.right - iconSize;
@@ -99,6 +121,18 @@ void PaintButton(HWND window, ButtonState& state) {
                         paint::Font(style.font, dpi), enabled ? style.text : style.disabledText,
                         state.alignment | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
+        if (!state.menuItems.empty()) {
+            const float centerX = (chevronBounds.left + chevronBounds.right) / 2.0f;
+            const float centerY = (chevronBounds.top + chevronBounds.bottom) / 2.0f;
+            const float halfWidth = paint::ToPixels(4.0f, dpi);
+            const float halfHeight = paint::ToPixels(2.0f, dpi);
+            const Gdiplus::PointF points[]{{centerX - halfWidth, centerY - halfHeight},
+                                           {centerX, centerY + halfHeight},
+                                           {centerX + halfWidth, centerY - halfHeight}};
+            Gdiplus::Pen pen(paint::GdiPlusColor(enabled ? style.text : style.disabledText),
+                             paint::ToPixels(1.5f, dpi));
+            graphics.DrawLines(&pen, points, static_cast<INT>(std::size(points)));
+        }
         if (GetFocus() == window)
             paint::Border(graphics, shape, radius, style.focus,
                          paint::ToPixels(style.focusWidthDip, dpi));
@@ -109,11 +143,9 @@ void PaintButton(HWND window, ButtonState& state) {
 LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     auto state = reinterpret_cast<ButtonState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCCREATE) {
-        const auto options = static_cast<const ButtonOptions*>(
+        const auto options = static_cast<const ButtonState*>(
             reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
-        auto created = std::make_unique<ButtonState>(ButtonState{
-            options->icon, options->bitmap, options->iconSizeDip, options->alignment,
-            options->isDefault, options->isCancel});
+        auto created = std::make_unique<ButtonState>(*options);
         internal::RegisterWindow(window);
         state = created.release();
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
@@ -168,18 +200,35 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
             state->mousePressed = false;
             if (GetCapture() == window) ReleaseCapture();
             InvalidateRect(window, nullptr, FALSE);
-            if (activate) NotifyClicked(window);
+            if (activate) ActivateButton(window, *state);
         }
         return 0;
     case WM_CAPTURECHANGED:
         if (state) CancelPress(window, *state);
         return 0;
     case BM_CLICK:
-        NotifyClicked(window);
+        if (state) ActivateButton(window, *state);
         return 0;
     case internal::ButtonGetPressedMessage:
         return state && (state->mousePressed || state->keyboardPressedKey);
+    case internal::ButtonSetMenuItemsMessage:
+        if (!state || !lParam) return FALSE;
+        state->menuItems = *reinterpret_cast<const std::vector<MenuItem>*>(lParam);
+        InvalidateRect(window, nullptr, FALSE);
+        return TRUE;
+    case internal::ButtonGetMenuStateMessage:
+        return state ? (!state->menuItems.empty() ? 1 : 0) | (state->menuOpen ? 2 : 0) : 0;
+    case WM_SYSKEYDOWN:
+        if (state && !state->menuItems.empty() && wParam == VK_DOWN && IsWindowEnabled(window)) {
+            ActivateButton(window, *state);
+            return 0;
+        }
+        return DefWindowProcW(window, message, wParam, lParam);
     case WM_KEYDOWN:
+        if (state && !state->menuItems.empty() && wParam == VK_DOWN && IsWindowEnabled(window)) {
+            ActivateButton(window, *state);
+            return 0;
+        }
         if (state && IsWindowEnabled(window) &&
             (wParam == VK_SPACE || wParam == VK_RETURN || (state->isCancel && wParam == VK_ESCAPE)) &&
             !state->keyboardPressedKey) {
@@ -191,7 +240,7 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
         if (state && state->keyboardPressedKey == wParam) {
             state->keyboardPressedKey = 0;
             InvalidateRect(window, nullptr, FALSE);
-            NotifyClicked(window);
+            ActivateButton(window, *state);
         }
         return 0;
     case WM_PAINT:
@@ -202,19 +251,25 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 }
 
-HWND Create(const ButtonOptions& options) {
+HWND Create(const ButtonOptions& options, const MenuButtonOptions* menuOptions) {
     if (!options.parent || !IsWindow(options.parent)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return nullptr;
     }
     const auto dpi = paint::Dpi(options.parent);
     const int id = options.isCancel ? IDCANCEL : options.id;
+    ButtonState state{options.icon, options.bitmap, options.iconSizeDip, options.alignment,
+                      options.isDefault, options.isCancel};
+    if (menuOptions) {
+        state.menuItems = menuOptions->items;
+        state.menuAppearance = menuOptions->menuAppearance;
+    }
     const auto window = CreateWindowExW(
         0, ButtonClass, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
         DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), internal::Instance(),
-        const_cast<ButtonOptions*>(&options));
+        &state);
     if (window && !options.appearance.background.has_value() && options.isDefault) {
         auto appearance = options.appearance;
         appearance.background = GetTheme().palette.accent;
@@ -229,7 +284,27 @@ HWND Create(const ButtonOptions& options) {
 
 } // namespace
 
-HWND CreateButton(const ButtonOptions& options) { return Create(options); }
+HWND CreateButton(const ButtonOptions& options) { return Create(options, nullptr); }
+
+HWND CreateMenuButton(const MenuButtonOptions& options) {
+    if (!internal::ValidMenuItems(options.items)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return Create(options, &options);
+}
+
+bool SetMenuItems(HWND menuButton, const std::vector<MenuItem>& items) {
+    if (!internal::IsLibraryWindow(menuButton, ButtonClass)) return false;
+    if (!(SendMessageW(menuButton, internal::ButtonGetMenuStateMessage, 0, 0) & 1) ||
+        !internal::ValidMenuItems(items)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return false;
+    }
+    internal::CancelPopupMenu(menuButton);
+    return SendMessageW(menuButton, internal::ButtonSetMenuItemsMessage, 0,
+                        reinterpret_cast<LPARAM>(&items)) != FALSE;
+}
 
 namespace internal {
 bool RegisterButtonClasses() {

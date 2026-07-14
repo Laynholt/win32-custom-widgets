@@ -86,6 +86,8 @@ inline constexpr UINT ComboGetAccessibleValueMessage = WM_APP + 0x585;
 inline constexpr UINT ButtonGetPressedMessage = WM_APP + 0x586;
 inline constexpr UINT ComboGetOpenMessage = WM_APP + 0x587;
 inline constexpr UINT ProgressGetIndeterminateMessage = WM_APP + 0x588;
+inline constexpr UINT ButtonSetMenuItemsMessage = WM_APP + 0x589;
+inline constexpr UINT ButtonGetMenuStateMessage = WM_APP + 0x58A;
 
 HWND CreateNumericBoxWindow(const NumericBoxOptions& options);
 bool IsTextBoxWindow(HWND window, bool numericOnly = false);
