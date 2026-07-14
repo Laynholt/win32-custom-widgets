@@ -88,6 +88,7 @@ RECT ForegroundBounds(HWND window, COLORREF background, COLORREF foreground) {
     for (int y = client.top; y < client.bottom; ++y) {
         for (int x = client.left; x < client.right; ++x) {
             const auto pixel = GetPixel(dc, x, y);
+            if (pixel == CLR_INVALID) continue;
             const int redFromBackground = GetRValue(pixel) - GetRValue(background);
             const int greenFromBackground = GetGValue(pixel) - GetGValue(background);
             const int blueFromBackground = GetBValue(pixel) - GetBValue(background);
@@ -126,6 +127,7 @@ void CheckBuiltinIconPixels(HWND window) {
     for (int y = 2; y < bounds.bottom - 2; ++y) {
         for (int x = 2; x < bounds.right - 2; ++x) {
             const auto pixel = GetPixel(dc, x, y);
+            if (pixel == CLR_INVALID) continue;
             hasBackground |= pixel == background;
             hasForeground |= pixel == foreground;
             hasIntermediate |= pixel != background && pixel != foreground;
@@ -306,7 +308,7 @@ int main() {
         CHECK(GetFocus() != display);
     }
 
-    ShowWindow(parent, SW_SHOWNOACTIVATE);
+    ShowWindow(parent, SW_SHOW);
     ShowWindow(button, SW_SHOWNOACTIVATE);
     CHECK(RedrawWindow(button, nullptr, nullptr,
                        RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW) != FALSE);
@@ -456,6 +458,7 @@ int main() {
         for (int y = menuClient.top; y < menuClient.bottom; ++y) {
             for (int x = menuClient.left; x < menuClient.right; ++x) {
                 const auto pixel = GetPixel(dc, x, y);
+                if (pixel == CLR_INVALID) continue;
                 const int backgroundDistance = GetRValue(pixel) * GetRValue(pixel) +
                                                GetGValue(pixel) * GetGValue(pixel) +
                                                GetBValue(pixel) * GetBValue(pixel);

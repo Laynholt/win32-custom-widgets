@@ -35,9 +35,9 @@ enum Id {
 };
 
 struct Gallery {
-    HWND window{}, dark{}, light{}, accent{}, disabled{}, iconButton{}, label{}, image{}, separator{},
-        panel{}, text{}, numeric{}, checkbox{}, toggle{}, slider{}, radius{}, progress{}, activity{},
-        combo{}, scroll{}, status{};
+    HWND window{}, dark{}, light{}, accent{}, disabled{}, iconButton{}, menuButton{}, label{},
+        informationIcon{}, warningIcon{}, errorIcon{}, separator{}, panel{}, text{}, numeric{},
+        checkbox{}, toggle{}, slider{}, radius{}, progress{}, activity{}, combo{}, scroll{}, status{};
     float radiusDip{8};
     bool lightTheme{};
     std::vector<HWND> rounded;
@@ -73,6 +73,20 @@ wcw::ControlOptions Base(HWND parent, int id, std::wstring text, std::wstring na
 
 void SetStatus(Gallery& gallery, const std::wstring& text) {
     SetWindowTextW(gallery.status, text.c_str());
+}
+
+std::vector<wcw::MenuItem> GalleryMenu() {
+    return {
+        {.id = 2001, .text = L"Information", .shortcut = L"Ctrl+I",
+         .image = wcw::BuiltinIcon::Information},
+        {.id = 2002, .text = L"Warning", .image = wcw::BuiltinIcon::Warning, .checked = true},
+        {.separator = true},
+        {.text = L"More actions",
+         .children = {
+             {.id = 2003, .text = L"Report error", .image = wcw::BuiltinIcon::Error},
+             {.id = 2004, .text = L"Unavailable", .enabled = false},
+         }},
+    };
 }
 
 void ApplyAppearance(Gallery& gallery) {
@@ -119,9 +133,13 @@ void Layout(Gallery& g) {
     MoveWindowDip(g.activity, margin, 380, column, 18);
     MoveWindowDip(g.combo, margin, 410, column, 38);
 
-    const float scrollTop = wide ? 52 : 466;
-    MoveWindowDip(g.panel, right, wide ? 16 : 462, column, 28);
-    MoveWindowDip(g.image, right + column - 32, wide ? 14 : 460, 28, 28);
+    const float headerTop = wide ? 16 : 462;
+    const float scrollTop = wide ? 58 : 510;
+    MoveWindowDip(g.panel, right, headerTop, column - 224, 28);
+    MoveWindowDip(g.informationIcon, right + column - 214, headerTop + 2, 24, 24);
+    MoveWindowDip(g.warningIcon, right + column - 184, headerTop + 2, 24, 24);
+    MoveWindowDip(g.errorIcon, right + column - 154, headerTop + 2, 24, 24);
+    MoveWindowDip(g.menuButton, right + column - 120, headerTop - 4, 120, 36);
     MoveWindowDip(g.scroll, right, scrollTop, column,
                   (std::max)(120.0f, height - scrollTop - 62));
     MoveWindowDip(g.status, margin, height - 40, width - margin * 2, 28);
@@ -149,11 +167,22 @@ bool CreateGallery(Gallery& g) {
     icon.icon = LoadIconW(nullptr, IDI_INFORMATION);
     g.iconButton = wcw::CreateButton(icon);
 
+    wcw::MenuButtonOptions menuButton{Base(g.window, 0, L"Open menu")};
+    menuButton.items = GalleryMenu();
+    g.menuButton = wcw::CreateMenuButton(menuButton);
+
     g.label = wcw::CreateLabel(Base(g.window, 0, L"Win32 Custom Widgets gallery"));
     g.separator = wcw::CreateSeparator(Base(g.window, 0, L""));
     g.panel = wcw::CreatePanel(Base(g.window, 0, L"Widget gallery and scroll view"));
-    g.image = wcw::CreateImageView(Base(g.window, 0, L"", L"Application icon"),
-                                   wcw::ImageSource(LoadIconW(nullptr, IDI_APPLICATION)));
+    auto semanticIcon = Base(g.window, 0, L"", L"Information icon");
+    semanticIcon.appearance.foreground = wcw::Color::FromRgb(0x00, 0x78, 0xD4);
+    g.informationIcon = wcw::CreateImageView(semanticIcon, wcw::BuiltinIcon::Information);
+    semanticIcon.accessibleName = L"Warning icon";
+    semanticIcon.appearance.foreground = wcw::Color::FromRgb(0xF7, 0xA8, 0x00);
+    g.warningIcon = wcw::CreateImageView(semanticIcon, wcw::BuiltinIcon::Warning);
+    semanticIcon.accessibleName = L"Error icon";
+    semanticIcon.appearance.foreground = wcw::Color::FromRgb(0xD1, 0x34, 0x38);
+    g.errorIcon = wcw::CreateImageView(semanticIcon, wcw::BuiltinIcon::Error);
 
     wcw::TextBoxOptions text{Base(g.window, 0, L"", L"Text input with error")};
     text.placeholder = L"Validation error example";
@@ -235,8 +264,9 @@ bool CreateGallery(Gallery& g) {
 
     g.rounded = {g.dark, g.light, g.text, g.numeric, g.checkbox, g.toggle, g.combo};
     return std::ranges::all_of(g.rounded, [](HWND window) { return window != nullptr; }) &&
-           g.accent && g.disabled && g.iconButton && g.label && g.image && g.separator && g.panel &&
-           g.slider && g.radius && g.progress && g.activity && g.scroll && g.status &&
+           g.accent && g.disabled && g.iconButton && g.menuButton && g.label &&
+           g.informationIcon && g.warningIcon && g.errorIcon && g.separator && g.panel && g.slider &&
+           g.radius && g.progress && g.activity && g.scroll && g.status &&
            std::ranges::all_of(g.nested, [](const auto& item) { return item.first != nullptr; }) &&
            iconTooltip && sliderTooltip;
 }
@@ -270,7 +300,25 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                          SWP_NOACTIVATE | SWP_NOZORDER);
         Layout(*gallery);
         return 0;
+    case WM_CONTEXTMENU: {
+        POINT position{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+        if (position.x == -1 && position.y == -1) {
+            RECT bounds{};
+            GetClientRect(window, &bounds);
+            position = {(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+            ClientToScreen(window, &position);
+        }
+        wcw::ContextMenuOptions menu{GalleryMenu()};
+        wcw::ShowContextMenu(window, position, menu);
+        return 0;
+    }
     case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case 2001: SetStatus(*gallery, L"Information selected"); return 0;
+        case 2002: SetStatus(*gallery, L"Warning selected"); return 0;
+        case 2003: SetStatus(*gallery, L"Report error selected"); return 0;
+        case 2004: SetStatus(*gallery, L"Unavailable selected"); return 0;
+        }
         if (HIWORD(wParam) == BN_CLICKED && gallery) {
             if (LOWORD(wParam) == Dark) gallery->lightTheme = false;
             else if (LOWORD(wParam) == Light) gallery->lightTheme = true;
