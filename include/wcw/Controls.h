@@ -96,6 +96,27 @@ struct ImageSource {
     ImageSource(BuiltinIcon icon) : kind(Kind::Builtin), builtin(icon) {}
 };
 
+struct MenuItem {
+    int id{};
+    std::wstring text;
+    std::wstring shortcut;
+    ImageSource image;
+    std::vector<MenuItem> children;
+    bool enabled{true};
+    bool checked{};
+    bool separator{};
+};
+
+struct ContextMenuOptions {
+    std::vector<MenuItem> items;
+    StyleOverride appearance;
+};
+
+struct MenuButtonOptions : ButtonOptions {
+    std::vector<MenuItem> items;
+    StyleOverride menuAppearance;
+};
+
 struct ComboItem {
     std::wstring text;
     std::intptr_t id{};
@@ -150,6 +171,9 @@ struct SelectionChangedNotification {
 enum class ImageMode { Contain, Cover, Stretch };
 
 HWND CreateButton(const ButtonOptions& options);
+bool ShowContextMenu(HWND owner, POINT screenPosition, const ContextMenuOptions& options);
+HWND CreateMenuButton(const MenuButtonOptions& options);
+bool SetMenuItems(HWND menuButton, const std::vector<MenuItem>& items);
 HWND CreateLabel(const ControlOptions& options);
 HWND CreateImageView(const ControlOptions& options, ImageSource source,
                      ImageMode mode = ImageMode::Contain);
