@@ -263,3 +263,21 @@ rtk proxy ctest --test-dir build-value-wait-release -C Release --output-on-failu
 100% tests passed, 0 tests failed out of 12
 Total Test time (real) = 39.66 sec
 ```
+
+## Deterministic dialog menu selection
+
+An independent Debug run later failed the dialog menu-button Down-key scenario: the expected replacement command `302` and dialog menu-button source were both missing after `IsDialogMessageW` returned. The unchanged focused Debug binary reproduced those two assertions twice in one hundred runs. That broad desktop-GUI stress also encountered unrelated existing assertions; those were not investigated or changed.
+
+Temporary boundary instrumentation isolated the requested failure on diagnostic run 74. After the synchronous `IsDialogMessageW` call returned without a command, `KillTimer(dialog, 23)` returned true, while there was no popup and no capture. Thus the one-millisecond selection timer was still active: its callback had never been dispatched, so `FindWindowW` had never been reached. Production had already ended the popup in response to normal external UI state before Windows synthesized the low-priority timer message. The defect was the test's timer-based ordering, not dialog routing or production command delivery. All diagnostic instrumentation was removed.
+
+Only `tests/test_menu.cpp` changed. The dialog test now posts a test-unique message before sending the synthetic Down key through `IsDialogMessageW`. `DialogProc` handles that message by selecting the first popup item. Because the message can be dispatched only after the key synchronously opens the popup and enters its nested message loop, the selection is ordered on popup readiness without a wall-clock delay, retry, or production change. The command, source, popup-lifetime, and duplicate-command assertions remain intact.
+
+Under the final verification cap, the rebuilt focused Debug `MenuTests` ran once and exited `0`. One sequential full Debug suite then passed:
+
+```text
+rtk proxy ctest --test-dir build-value-wait-debug -C Debug --output-on-failure
+100% tests passed, 0 tests failed out of 12
+Total Test time (real) = 7.92 sec
+```
+
+No additional stress or Release run was performed after the cap was imposed.

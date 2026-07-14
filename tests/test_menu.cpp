@@ -41,6 +41,7 @@ HWINEVENTHOOK focusHook{};
 const std::vector<wcw::MenuItem> replacementMenu{{.id = 302, .text = L"Replacement"}};
 constexpr UINT QueuedPointerDownMessage = WM_APP + 1;
 constexpr UINT QueuedPointerUpMessage = WM_APP + 2;
+constexpr UINT SelectFirstPopupMessage = WM_APP + 3;
 
 bool SameRect(RECT left, RECT right) {
     return left.left == right.left && left.top == right.top &&
@@ -171,7 +172,18 @@ void PumpMessages() {
     }
 }
 
+void SelectFirstPopup() {
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+}
+
 INT_PTR CALLBACK DialogProc(HWND, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == SelectFirstPopupMessage) {
+        SelectFirstPopup();
+        return TRUE;
+    }
     if (message == WM_COMMAND) {
         commandId = LOWORD(wParam);
         commandCode = HIWORD(wParam);
@@ -344,10 +356,7 @@ void CALLBACK CapturePopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
 
 void CALLBACK SelectFirst(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
-    const auto popup = Popup();
-    CHECK(popup != nullptr);
-    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
-    SendMessageW(popup, WM_KEYDOWN, VK_RETURN, 0);
+    SelectFirstPopup();
 }
 
 void CALLBACK ReplaceMenu(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -711,10 +720,9 @@ int main() {
     menuButtonId = dialogMenuButtonOptions.id;
     ResetCommand();
     buttonIdCommands = 0;
-    SetTimer(dialog, 23, 1, SelectFirst);
+    CHECK(PostMessageW(dialog, SelectFirstPopupMessage, 0, 0));
     MSG down{dialogMenuButton, WM_KEYDOWN, VK_DOWN, 0};
     CHECK(IsDialogMessageW(dialog, &down));
-    KillTimer(dialog, 23);
     CHECK(commandId == 302);
     CHECK(commandSource == reinterpret_cast<LPARAM>(dialogMenuButton));
     CHECK(!popupAliveWhenCommand);
