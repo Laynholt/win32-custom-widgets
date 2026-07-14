@@ -112,6 +112,35 @@ RECT ForegroundBounds(HWND window, COLORREF background, COLORREF foreground) {
     return found ? bounds : RECT{};
 }
 
+void CheckBuiltinIconPixels(HWND window) {
+    RECT bounds{};
+    GetClientRect(window, &bounds);
+    const auto dc = GetDC(window);
+    CHECK(dc != nullptr);
+    if (!dc) return;
+    const auto background = RGB(0, 0, 0);
+    const auto foreground = RGB(255, 255, 255);
+    bool hasBackground{};
+    bool hasForeground{};
+    bool hasIntermediate{};
+    for (int y = 2; y < bounds.bottom - 2; ++y) {
+        for (int x = 2; x < bounds.right - 2; ++x) {
+            const auto pixel = GetPixel(dc, x, y);
+            hasBackground |= pixel == background;
+            hasForeground |= pixel == foreground;
+            hasIntermediate |= pixel != background && pixel != foreground;
+        }
+    }
+    CHECK(hasBackground);
+    CHECK(hasForeground);
+    CHECK(hasIntermediate);
+    CHECK(GetRValue(GetPixel(dc, 0, 0)) < 128);
+    CHECK(GetRValue(GetPixel(dc, bounds.right - 1, 0)) < 128);
+    CHECK(GetRValue(GetPixel(dc, 0, bounds.bottom - 1)) < 128);
+    CHECK(GetRValue(GetPixel(dc, bounds.right - 1, bounds.bottom - 1)) < 128);
+    ReleaseDC(window, dc);
+}
+
 } // namespace
 
 int main() {
@@ -320,6 +349,24 @@ int main() {
     CHECK(GetObjectW(bitmap, sizeof(bitmapInfo), &bitmapInfo) == sizeof(bitmapInfo));
     DeleteObject(bitmap);
 
+    const std::array builtinIcons{wcw::BuiltinIcon::Information,
+                                  wcw::BuiltinIcon::Warning,
+                                  wcw::BuiltinIcon::Error};
+    std::array<HWND, builtinIcons.size()> builtinViews{};
+    for (size_t index = 0; index < builtinIcons.size(); ++index) {
+        base.id = 60 + static_cast<int>(index);
+        base.bounds = {static_cast<float>(index * 28), 130, 24, 24};
+        base.appearance = {.background = wcw::Color::FromRgb(0, 0, 0),
+                           .foreground = wcw::Color::FromRgb(255, 255, 255),
+                           .cornerRadiusDip = 0.0f};
+        builtinViews[index] = wcw::CreateImageView(base, wcw::ImageSource(builtinIcons[index]));
+        CHECK(builtinViews[index] != nullptr);
+        ShowWindow(builtinViews[index], SW_SHOWNOACTIVATE);
+        CHECK(RedrawWindow(builtinViews[index], nullptr, nullptr,
+                           RDW_INVALIDATE | RDW_UPDATENOW) != FALSE);
+        CheckBuiltinIconPixels(builtinViews[index]);
+    }
+
     base.bounds = {0, 70, 120, 48};
     base.text = L"Centered";
     base.appearance = {.background = wcw::Color::FromRgb(0, 0, 0),
@@ -365,6 +412,7 @@ int main() {
     DestroyWindow(dialog);
     DestroyWindow(paddedLabel);
     DestroyWindow(wrappedLabel);
+    for (const auto view : builtinViews) DestroyWindow(view);
     for (const auto control : controls) DestroyWindow(control);
     wcw::Shutdown();
     DestroyWindow(parent);

@@ -9,6 +9,10 @@
 #include <memory>
 #include <string_view>
 
+namespace wcw {
+struct ImageSource;
+}
+
 namespace wcw::paint {
 
 class Buffer {
@@ -42,6 +46,7 @@ void Text(HDC dc, std::wstring_view text, RECT bounds, HFONT font, Color color,
           UINT format = DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 void Icon(HDC dc, HICON icon, const RECT& bounds);
 void Bitmap(HDC dc, HBITMAP bitmap, const RECT& bounds);
+void Image(HDC dc, ImageSource source, const RECT& bounds, Color foreground);
 
 HFONT Font(const FontSpec& spec, unsigned dpi);
 void ClearFontCache();

@@ -24,6 +24,7 @@ struct DisplayState {
 };
 
 SIZE ImageSize(ImageSource source) {
+    if (source.kind == ImageSource::Kind::Builtin) return {16, 16};
     if (!source.handle) return {};
     if (source.kind == ImageSource::Kind::Bitmap) {
         BITMAP bitmap{};
@@ -108,7 +109,8 @@ void PaintDisplay(HWND window, const DisplayState& state) {
             paint::Text(buffer.dc(), label, textBounds, font,
                         IsWindowEnabled(window) ? style.text : style.disabledText,
                         DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
-        } else if (state.kind == DisplayKind::Image && state.source.handle) {
+        } else if (state.kind == DisplayKind::Image &&
+                   (state.source.kind == ImageSource::Kind::Builtin || state.source.handle)) {
             const int diameter = DipToPx(style.cornerRadiusDip * 2, dpi);
             const auto clip = radius > 0
                                   ? CreateRoundRectRgn(bounds.left, bounds.top, bounds.right + 1,
@@ -116,10 +118,7 @@ void PaintDisplay(HWND window, const DisplayState& state) {
                                   : CreateRectRgnIndirect(&bounds);
             SelectClipRgn(buffer.dc(), clip);
             const auto destination = ImageBounds(bounds, ImageSize(state.source), state.mode);
-            if (state.source.kind == ImageSource::Kind::Icon)
-                paint::Icon(buffer.dc(), static_cast<HICON>(state.source.handle), destination);
-            else
-                paint::Bitmap(buffer.dc(), static_cast<HBITMAP>(state.source.handle), destination);
+            paint::Image(buffer.dc(), state.source, destination, style.text);
             SelectClipRgn(buffer.dc(), nullptr);
             DeleteObject(clip);
         } else if (state.kind == DisplayKind::Separator) {

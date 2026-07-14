@@ -1,5 +1,6 @@
 #include "Paint.h"
 
+#include <wcw/Controls.h>
 #include <wcw/Geometry.h>
 
 #include <algorithm>
@@ -122,6 +123,75 @@ void Bitmap(HDC dc, HBITMAP bitmap, const RECT& bounds) {
                source, 0, 0, info.bmWidth, info.bmHeight, SRCCOPY);
     SelectObject(source, previous);
     DeleteDC(source);
+}
+
+void Image(HDC dc, ImageSource source, const RECT& bounds, Color foreground) {
+    if (source.kind == ImageSource::Kind::Icon) {
+        Icon(dc, static_cast<HICON>(source.handle), bounds);
+        return;
+    }
+    if (source.kind == ImageSource::Kind::Bitmap) {
+        Bitmap(dc, static_cast<HBITMAP>(source.handle), bounds);
+        return;
+    }
+    if (source.kind != ImageSource::Kind::Builtin || !dc) return;
+
+    const float width = static_cast<float>(bounds.right - bounds.left);
+    const float height = static_cast<float>(bounds.bottom - bounds.top);
+    if (width <= 0 || height <= 0) return;
+    const float size = (std::min)(width, height);
+    const float penWidth = (std::max)(1.5f, width / 12.0f);
+    const Gdiplus::RectF square{
+        static_cast<float>(bounds.left) + (width - size) / 2.0f + penWidth,
+        static_cast<float>(bounds.top) + (height - size) / 2.0f + penWidth,
+        size - 2.0f * penWidth, size - 2.0f * penWidth};
+    if (square.Width <= 0 || square.Height <= 0) return;
+
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    Gdiplus::Pen pen(GdiPlusColor(foreground), penWidth);
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+    pen.SetLineJoin(Gdiplus::LineJoinRound);
+    Gdiplus::SolidBrush brush(GdiPlusColor(foreground));
+    const float centerX = square.X + square.Width / 2.0f;
+
+    switch (source.builtin) {
+    case BuiltinIcon::Information: {
+        graphics.DrawEllipse(&pen, square);
+        const float dot = penWidth;
+        graphics.FillEllipse(&brush, centerX - dot / 2.0f,
+                             square.Y + square.Height * 0.24f - dot / 2.0f, dot, dot);
+        graphics.DrawLine(&pen, centerX, square.Y + square.Height * 0.45f,
+                          centerX, square.Y + square.Height * 0.75f);
+        break;
+    }
+    case BuiltinIcon::Warning: {
+        const Gdiplus::PointF points[]{{centerX, square.Y},
+                                       {square.GetRight(), square.GetBottom()},
+                                       {square.X, square.GetBottom()}};
+        Gdiplus::GraphicsPath path;
+        path.AddPolygon(points, 3);
+        graphics.DrawPath(&pen, &path);
+        graphics.DrawLine(&pen, centerX, square.Y + square.Height * 0.34f,
+                          centerX, square.Y + square.Height * 0.60f);
+        const float dot = penWidth;
+        graphics.FillEllipse(&brush, centerX - dot / 2.0f,
+                             square.Y + square.Height * 0.76f - dot / 2.0f, dot, dot);
+        break;
+    }
+    case BuiltinIcon::Error:
+        graphics.DrawEllipse(&pen, square);
+        graphics.DrawLine(&pen, square.X + square.Width * 0.32f,
+                          square.Y + square.Height * 0.32f,
+                          square.X + square.Width * 0.68f,
+                          square.Y + square.Height * 0.68f);
+        graphics.DrawLine(&pen, square.X + square.Width * 0.68f,
+                          square.Y + square.Height * 0.32f,
+                          square.X + square.Width * 0.32f,
+                          square.Y + square.Height * 0.68f);
+        break;
+    }
 }
 
 HFONT Font(const FontSpec& spec, unsigned dpi) {

@@ -81,15 +81,19 @@ struct CheckChangedNotification {
     bool checked;
 };
 
+enum class BuiltinIcon { Information, Warning, Error };
+
 struct ImageSource {
-    enum class Kind { None, Icon, Bitmap };
+    enum class Kind { None, Icon, Bitmap, Builtin };
 
     Kind kind{Kind::None};
     HANDLE handle{};
+    BuiltinIcon builtin{BuiltinIcon::Information};
 
     ImageSource() = default;
     ImageSource(HICON icon) : kind(Kind::Icon), handle(icon) {}
     ImageSource(HBITMAP bitmap) : kind(Kind::Bitmap), handle(bitmap) {}
+    ImageSource(BuiltinIcon icon) : kind(Kind::Builtin), builtin(icon) {}
 };
 
 struct ComboItem {

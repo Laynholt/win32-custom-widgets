@@ -133,14 +133,6 @@ void DragScrollbar(HWND popup, PopupState& popupState, int y) {
     InvalidateRect(popup, nullptr, FALSE);
 }
 
-void DrawImage(HDC dc, const ImageSource& source, RECT bounds) {
-    if (!source.handle) return;
-    if (source.kind == ImageSource::Kind::Icon)
-        paint::Icon(dc, static_cast<HICON>(source.handle), bounds);
-    else if (source.kind == ImageSource::Kind::Bitmap)
-        paint::Bitmap(dc, static_cast<HBITMAP>(source.handle), bounds);
-}
-
 void PaintCombo(HWND window, const ComboState& state) {
     PAINTSTRUCT ps{};
     const auto target = BeginPaint(window, &ps);
@@ -170,16 +162,17 @@ void PaintCombo(HWND window, const ComboState& state) {
         const int selected = state.model.Selection();
         if (selected >= 0) {
             const auto& item = state.model.Items()[selected];
-            if (item.image.handle) {
+            const auto textColor = enabled ? style.text : style.disabledText;
+            if (item.image.kind == ImageSource::Kind::Builtin || item.image.handle) {
                 const int size = std::min(DipToPx(18, dpi),
                                           static_cast<int>(bounds.bottom) - 2 * padding);
                 RECT imageBounds{textBounds.left, (bounds.bottom - size) / 2,
                                  textBounds.left + size, (bounds.bottom + size) / 2};
-                DrawImage(buffer.dc(), item.image, imageBounds);
+                paint::Image(buffer.dc(), item.image, imageBounds, textColor);
                 textBounds.left = imageBounds.right + DipToPx(style.spacingDip, dpi);
             }
             paint::Text(buffer.dc(), item.text, textBounds, paint::Font(style.font, dpi),
-                        enabled ? style.text : style.disabledText,
+                        textColor,
                         DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
         }
 
@@ -232,12 +225,12 @@ void PaintPopup(HWND window, const PopupState& popupState) {
             RECT textBounds{padding, row * rowHeight, bounds.right - scrollbarWidth - padding,
                             (row + 1) * rowHeight};
             const auto& item = comboState->model.Items()[index];
-            if (item.image.handle) {
+            if (item.image.kind == ImageSource::Kind::Builtin || item.image.handle) {
                 const int size = std::min(DipToPx(18, dpi), rowHeight - 2 * padding);
                 RECT imageBounds{textBounds.left, row * rowHeight + (rowHeight - size) / 2,
                                  textBounds.left + size,
                                  row * rowHeight + (rowHeight + size) / 2};
-                DrawImage(buffer.dc(), item.image, imageBounds);
+                paint::Image(buffer.dc(), item.image, imageBounds, style.text);
                 textBounds.left = imageBounds.right + DipToPx(style.spacingDip, dpi);
             }
             paint::Text(buffer.dc(), item.text, textBounds, paint::Font(style.font, dpi), style.text,
