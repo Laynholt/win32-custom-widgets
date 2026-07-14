@@ -6,6 +6,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -75,6 +76,40 @@ HBITMAP TestBitmap() {
     DeleteDC(dc);
     ReleaseDC(nullptr, screen);
     return bitmap;
+}
+
+RECT ForegroundBounds(HWND window, COLORREF background, COLORREF foreground) {
+    RECT client{};
+    GetClientRect(window, &client);
+    RECT bounds{client.right, client.bottom, 0, 0};
+    bool found{};
+    const auto dc = GetDC(window);
+    if (!dc) return {};
+    for (int y = client.top; y < client.bottom; ++y) {
+        for (int x = client.left; x < client.right; ++x) {
+            const auto pixel = GetPixel(dc, x, y);
+            const int redFromBackground = GetRValue(pixel) - GetRValue(background);
+            const int greenFromBackground = GetGValue(pixel) - GetGValue(background);
+            const int blueFromBackground = GetBValue(pixel) - GetBValue(background);
+            const int redFromForeground = GetRValue(pixel) - GetRValue(foreground);
+            const int greenFromForeground = GetGValue(pixel) - GetGValue(foreground);
+            const int blueFromForeground = GetBValue(pixel) - GetBValue(foreground);
+            const int backgroundDistance = redFromBackground * redFromBackground +
+                                           greenFromBackground * greenFromBackground +
+                                           blueFromBackground * blueFromBackground;
+            const int foregroundDistance = redFromForeground * redFromForeground +
+                                           greenFromForeground * greenFromForeground +
+                                           blueFromForeground * blueFromForeground;
+            if (foregroundDistance >= backgroundDistance) continue;
+            found = true;
+            bounds.left = (std::min)(bounds.left, static_cast<LONG>(x));
+            bounds.top = (std::min)(bounds.top, static_cast<LONG>(y));
+            bounds.right = (std::max)(bounds.right, static_cast<LONG>(x + 1));
+            bounds.bottom = (std::max)(bounds.bottom, static_cast<LONG>(y + 1));
+        }
+    }
+    ReleaseDC(window, dc);
+    return found ? bounds : RECT{};
 }
 
 } // namespace
@@ -285,11 +320,51 @@ int main() {
     CHECK(GetObjectW(bitmap, sizeof(bitmapInfo), &bitmapInfo) == sizeof(bitmapInfo));
     DeleteObject(bitmap);
 
+    base.bounds = {0, 70, 120, 48};
+    base.text = L"Centered";
+    base.appearance = {.background = wcw::Color::FromRgb(0, 0, 0),
+                       .foreground = wcw::Color::FromRgb(255, 255, 255),
+                       .font = wcw::FontSpec{L"Arial", 14.0f},
+                       .paddingXDip = 12.0f,
+                       .paddingYDip = 8.0f,
+                       .cornerRadiusDip = 0.0f};
+    const auto paddedLabel = wcw::CreateLabel(base);
+    CHECK(paddedLabel != nullptr);
+    ShowWindow(paddedLabel, SW_SHOWNOACTIVATE);
+    CHECK(RedrawWindow(paddedLabel, nullptr, nullptr,
+                       RDW_INVALIDATE | RDW_UPDATENOW) != FALSE);
+    RECT paddedClient{};
+    GetClientRect(paddedLabel, &paddedClient);
+    const auto paddedText = ForegroundBounds(paddedLabel, RGB(0, 0, 0), RGB(255, 255, 255));
+    CHECK(!IsRectEmpty(&paddedText));
+    CHECK(paddedText.left >= 10);
+    CHECK(paddedClient.right - paddedText.right >= 10);
+    CHECK((std::max)(paddedText.top, paddedClient.bottom - paddedText.bottom) -
+              (std::min)(paddedText.top, paddedClient.bottom - paddedText.bottom) <=
+          2);
+
+    base.bounds = {130, 70, 70, 56};
+    base.text = L"First second";
+    const auto wrappedLabel = wcw::CreateLabel(base);
+    CHECK(wrappedLabel != nullptr);
+    ShowWindow(wrappedLabel, SW_SHOWNOACTIVATE);
+    CHECK(RedrawWindow(wrappedLabel, nullptr, nullptr,
+                       RDW_INVALIDATE | RDW_UPDATENOW) != FALSE);
+    RECT wrappedClient{};
+    GetClientRect(wrappedLabel, &wrappedClient);
+    const auto wrappedText = ForegroundBounds(wrappedLabel, RGB(0, 0, 0), RGB(255, 255, 255));
+    CHECK(!IsRectEmpty(&wrappedText));
+    CHECK((std::max)(wrappedText.top, wrappedClient.bottom - wrappedText.bottom) -
+              (std::min)(wrappedText.top, wrappedClient.bottom - wrappedText.bottom) <=
+          2);
+
     DestroyWindow(defaultButton);
     DestroyWindow(cancelButton);
     DestroyWindow(dialogDefault);
     DestroyWindow(dialogCancel);
     DestroyWindow(dialog);
+    DestroyWindow(paddedLabel);
+    DestroyWindow(wrappedLabel);
     for (const auto control : controls) DestroyWindow(control);
     wcw::Shutdown();
     DestroyWindow(parent);

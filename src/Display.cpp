@@ -54,6 +54,25 @@ RECT ImageBounds(RECT bounds, SIZE source, ImageMode mode) {
     return {left, top, left + imageWidth, top + imageHeight};
 }
 
+RECT LabelTextBounds(HDC dc, RECT bounds, HFONT font, const ResolvedStyle& style,
+                     unsigned dpi, std::wstring_view text) {
+    const int paddingX = (std::max)(0, DipToPx(style.paddingXDip, dpi));
+    const int paddingY = (std::max)(0, DipToPx(style.paddingYDip, dpi));
+    RECT content{bounds.left + paddingX, bounds.top + paddingY,
+                 (std::max)(bounds.left + paddingX, bounds.right - paddingX),
+                 (std::max)(bounds.top + paddingY, bounds.bottom - paddingY)};
+    RECT measured{0, 0, content.right - content.left, 0};
+    const auto old = font ? SelectObject(dc, font) : nullptr;
+    DrawTextW(dc, text.data(), static_cast<int>(text.size()), &measured,
+              DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+    if (old) SelectObject(dc, old);
+    const int height = (std::min)(measured.bottom - measured.top,
+                                  content.bottom - content.top);
+    content.top += (content.bottom - content.top - height) / 2;
+    content.bottom = content.top + height;
+    return content;
+}
+
 void PaintDisplay(HWND window, const DisplayState& state) {
     PAINTSTRUCT ps{};
     const auto target = BeginPaint(window, &ps);
@@ -83,10 +102,12 @@ void PaintDisplay(HWND window, const DisplayState& state) {
         if (state.kind == DisplayKind::Label) {
             wchar_t text[1024]{};
             const int length = GetWindowTextW(window, text, 1024);
-            paint::Text(buffer.dc(), std::wstring_view(text, length), bounds,
-                        paint::Font(local.font.value_or(theme.label), dpi),
+            const std::wstring_view label(text, length);
+            const auto font = paint::Font(local.font.value_or(theme.label), dpi);
+            const auto textBounds = LabelTextBounds(buffer.dc(), bounds, font, style, dpi, label);
+            paint::Text(buffer.dc(), label, textBounds, font,
                         IsWindowEnabled(window) ? style.text : style.disabledText,
-                        DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
+                        DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
         } else if (state.kind == DisplayKind::Image && state.source.handle) {
             const int diameter = DipToPx(style.cornerRadiusDip * 2, dpi);
             const auto clip = radius > 0
