@@ -1,7 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
 #include <wcw/Controls.h>
 #include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
@@ -13,7 +9,6 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
-#include <new>
 #include <windowsx.h>
 
 namespace wcw {
@@ -32,26 +27,8 @@ struct SliderState {
     bool dragging{};
 };
 
-StyleOverride Overlay(StyleOverride result, const StyleOverride& local) {
-#define WCW_OVERLAY(member) if (local.member) result.member = local.member
-    WCW_OVERLAY(background); WCW_OVERLAY(foreground); WCW_OVERLAY(mutedForeground);
-    WCW_OVERLAY(border); WCW_OVERLAY(hover); WCW_OVERLAY(pressed); WCW_OVERLAY(selected);
-    WCW_OVERLAY(disabledSurface); WCW_OVERLAY(disabledText); WCW_OVERLAY(focus);
-    WCW_OVERLAY(accent); WCW_OVERLAY(danger); WCW_OVERLAY(font); WCW_OVERLAY(borderWidthDip);
-    WCW_OVERLAY(focusWidthDip); WCW_OVERLAY(paddingXDip); WCW_OVERLAY(paddingYDip);
-    WCW_OVERLAY(spacingDip); WCW_OVERLAY(controlHeightDip); WCW_OVERLAY(cornerRadiusDip);
-    WCW_OVERLAY(trackThicknessDip); WCW_OVERLAY(thumbSizeDip); WCW_OVERLAY(indicatorSizeDip);
-#undef WCW_OVERLAY
-    return result;
-}
-
 bool IsSliderWindow(HWND window) {
-    wchar_t name[32]{};
-    if (!IsWindow(window) || !GetClassNameW(window, name, 32) || wcscmp(name, SliderClass) != 0) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return false;
-    }
-    return true;
+    return internal::IsLibraryWindow(window, SliderClass);
 }
 
 double Normalize(const SliderState& state, double value, bool snap) {
@@ -84,8 +61,8 @@ SliderGeometry Geometry(HWND window, const SliderState& state) {
     const auto dpi = paint::Dpi(window);
     const auto theme = GetTheme();
     const auto base = internal::WindowStyleOverride(window);
-    const auto track = ResolveStyle(theme, Overlay(base, state.trackAppearance));
-    const auto thumb = ResolveStyle(theme, Overlay(base, state.thumbAppearance));
+    const auto track = ResolveStyle(theme, internal::OverlayStyle(base, state.trackAppearance));
+    const auto thumb = ResolveStyle(theme, internal::OverlayStyle(base, state.thumbAppearance));
     return {static_cast<float>(bounds.right), static_cast<float>(bounds.bottom),
             paint::ToPixels(thumb.thumbSizeDip, dpi),
             paint::ToPixels(track.trackThicknessDip, dpi),
@@ -109,8 +86,8 @@ void PaintSlider(HWND window, const SliderState& state) {
         const auto dpi = paint::Dpi(window);
         const auto theme = GetTheme();
         const auto base = internal::WindowStyleOverride(window);
-        const auto trackStyle = ResolveStyle(theme, Overlay(base, state.trackAppearance));
-        const auto thumbStyle = ResolveStyle(theme, Overlay(base, state.thumbAppearance));
+        const auto trackStyle = ResolveStyle(theme, internal::OverlayStyle(base, state.trackAppearance));
+        const auto thumbStyle = ResolveStyle(theme, internal::OverlayStyle(base, state.thumbAppearance));
         const auto enabled = IsWindowEnabled(window) != FALSE;
         paint::Clear(buffer.dc(), bounds, theme.palette.window);
         Gdiplus::Graphics graphics(buffer.dc());
@@ -138,7 +115,7 @@ void PaintSlider(HWND window, const SliderState& state) {
         paint::Fill(graphics, thumb, paint::ToPixels(thumbStyle.cornerRadiusDip, dpi),
                     enabled ? thumbStyle.accent : thumbStyle.disabledText);
         if (GetFocus() == window) {
-            paint::Focus(graphics, thumb, paint::ToPixels(thumbStyle.cornerRadiusDip, dpi),
+            paint::Border(graphics, thumb, paint::ToPixels(thumbStyle.cornerRadiusDip, dpi),
                          thumbStyle.focus, paint::ToPixels(thumbStyle.focusWidthDip, dpi));
         }
     }
@@ -247,17 +224,6 @@ LRESULT SliderProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 }
 
-LRESULT CALLBACK SliderProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return SliderProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
 } // namespace
 
 HWND CreateSlider(const SliderOptions& options) {
@@ -301,6 +267,8 @@ std::optional<double> GetSliderValue(HWND slider) {
 }
 
 namespace internal {
-bool RegisterSliderClass() { return RegisterControlClass(SliderClass, SliderProc); }
+bool RegisterSliderClass() {
+    return RegisterControlClass(SliderClass, SafeWindowProc<SliderProcImpl>);
+}
 } // namespace internal
 } // namespace wcw

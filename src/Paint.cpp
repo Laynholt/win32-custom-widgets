@@ -50,11 +50,6 @@ float ToPixels(float dip, unsigned dpi) {
     return dip * static_cast<float>(dpi) / USER_DEFAULT_SCREEN_DPI;
 }
 
-Gdiplus::RectF ToPixels(RectDip bounds, unsigned dpi) {
-    return {ToPixels(bounds.x, dpi), ToPixels(bounds.y, dpi), ToPixels(bounds.width, dpi),
-            ToPixels(bounds.height, dpi)};
-}
-
 Gdiplus::Color GdiPlusColor(Color color) {
     return {color.a, color.r, color.g, color.b};
 }
@@ -99,11 +94,6 @@ void Border(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float rad
     outline.Height = (std::max)(0.0f, outline.Height - 1.0f);
     const auto path = RoundedPath(outline, radius);
     graphics.DrawPath(&pen, path.get());
-}
-
-void Focus(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float radius, Color color,
-           float width) {
-    Border(graphics, bounds, radius, color, width);
 }
 
 void Text(HDC dc, std::wstring_view text, RECT bounds, HFONT font, Color color, UINT format) {

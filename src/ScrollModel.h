@@ -18,8 +18,6 @@ public:
     int ConsumeWheelDelta(int delta, bool horizontal);
 
 private:
-    bool ClampOffset();
-
     ScrollExtentDip extent_{};
     ScrollExtentDip viewport_{};
     ScrollOffsetDip offset_{};

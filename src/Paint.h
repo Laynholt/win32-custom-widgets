@@ -1,6 +1,5 @@
 #pragma once
 
-#include <wcw/Control.h>
 #include <wcw/Theme.h>
 
 #include <windows.h>
@@ -33,15 +32,12 @@ private:
 
 unsigned Dpi(HWND window);
 float ToPixels(float dip, unsigned dpi);
-Gdiplus::RectF ToPixels(RectDip bounds, unsigned dpi);
 Gdiplus::Color GdiPlusColor(Color color);
 void Clear(HDC dc, const RECT& bounds, Color color);
 std::unique_ptr<Gdiplus::GraphicsPath> RoundedPath(const Gdiplus::RectF& bounds, float radius);
 void Fill(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float radius, Color color);
 void Border(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float radius, Color color,
             float width);
-void Focus(Gdiplus::Graphics& graphics, const Gdiplus::RectF& bounds, float radius, Color color,
-           float width);
 void Text(HDC dc, std::wstring_view text, RECT bounds, HFONT font, Color color,
           UINT format = DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 void Icon(HDC dc, HICON icon, const RECT& bounds);

@@ -1,7 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
 #include <wcw/Controls.h>
 #include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
@@ -15,7 +11,6 @@
 #include <cmath>
 #include <commctrl.h>
 #include <memory>
-#include <new>
 #include <optional>
 #include <vector>
 #include <windowsx.h>
@@ -56,19 +51,6 @@ struct LayoutInfo {
 
 LRESULT CALLBACK AncestorProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
-StyleOverride Overlay(StyleOverride result, const StyleOverride& local) {
-#define WCW_OVERLAY(member) if (local.member) result.member = local.member
-    WCW_OVERLAY(background); WCW_OVERLAY(foreground); WCW_OVERLAY(mutedForeground);
-    WCW_OVERLAY(border); WCW_OVERLAY(hover); WCW_OVERLAY(pressed); WCW_OVERLAY(selected);
-    WCW_OVERLAY(disabledSurface); WCW_OVERLAY(disabledText); WCW_OVERLAY(focus);
-    WCW_OVERLAY(accent); WCW_OVERLAY(danger); WCW_OVERLAY(font); WCW_OVERLAY(borderWidthDip);
-    WCW_OVERLAY(focusWidthDip); WCW_OVERLAY(paddingXDip); WCW_OVERLAY(paddingYDip);
-    WCW_OVERLAY(spacingDip); WCW_OVERLAY(controlHeightDip); WCW_OVERLAY(cornerRadiusDip);
-    WCW_OVERLAY(trackThicknessDip); WCW_OVERLAY(thumbSizeDip); WCW_OVERLAY(indicatorSizeDip);
-#undef WCW_OVERLAY
-    return result;
-}
-
 bool FiniteNonNegative(ScrollExtentDip extent) {
     return std::isfinite(extent.width) && std::isfinite(extent.height) && extent.width >= 0 &&
            extent.height >= 0;
@@ -77,14 +59,7 @@ bool FiniteNonNegative(ScrollExtentDip extent) {
 bool Finite(ScrollOffsetDip offset) { return std::isfinite(offset.x) && std::isfinite(offset.y); }
 
 bool IsScrollViewWindow(HWND window) {
-    wchar_t name[32]{};
-    if (!IsWindow(window) || GetWindowThreadProcessId(window, nullptr) != GetCurrentThreadId() ||
-        !GetClassNameW(window, name, static_cast<int>(std::size(name))) ||
-        wcscmp(name, ScrollViewClass) != 0) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return false;
-    }
-    return true;
+    return internal::IsLibraryWindow(window, ScrollViewClass);
 }
 
 LayoutInfo CalculateLayout(HWND window, const ScrollState& state) {
@@ -92,7 +67,7 @@ LayoutInfo CalculateLayout(HWND window, const ScrollState& state) {
     GetClientRect(window, &bounds);
     const auto dpi = paint::Dpi(window);
     const auto base = internal::WindowStyleOverride(window);
-    const auto thumb = ResolveStyle(GetTheme(), Overlay(base, state.thumbAppearance));
+    const auto thumb = ResolveStyle(GetTheme(), internal::OverlayStyle(base, state.thumbAppearance));
     LayoutInfo result;
     result.width = std::max(0L, bounds.right);
     result.height = std::max(0L, bounds.bottom);
@@ -172,8 +147,8 @@ void PaintScrollView(HWND window, const ScrollState& state) {
         const auto theme = GetTheme();
         const auto base = internal::WindowStyleOverride(window);
         const auto style = ResolveStyle(theme, base);
-        const auto track = ResolveStyle(theme, Overlay(base, state.trackAppearance));
-        const auto thumb = ResolveStyle(theme, Overlay(base, state.thumbAppearance));
+        const auto track = ResolveStyle(theme, internal::OverlayStyle(base, state.trackAppearance));
+        const auto thumb = ResolveStyle(theme, internal::OverlayStyle(base, state.thumbAppearance));
         const auto layout = CalculateLayout(window, state);
         const auto enabled = IsWindowEnabled(window) != FALSE;
         paint::Clear(buffer.dc(), bounds, base.background.value_or(theme.palette.panel));
@@ -209,7 +184,7 @@ void PaintScrollView(HWND window, const ScrollState& state) {
         if (GetFocus() == window) {
             const Gdiplus::RectF focus{0, 0, static_cast<float>(bounds.right),
                                       static_cast<float>(bounds.bottom)};
-            paint::Focus(graphics, focus, paint::ToPixels(style.cornerRadiusDip, dpi), style.focus,
+            paint::Border(graphics, focus, paint::ToPixels(style.cornerRadiusDip, dpi), style.focus,
                          paint::ToPixels(style.focusWidthDip, dpi));
         }
     }
@@ -477,17 +452,6 @@ LRESULT ScrollProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 }
 
-LRESULT CALLBACK ScrollProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return ScrollProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
 LRESULT CALLBACK ViewportProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     return DefWindowProcW(window, message, wParam, lParam);
 }
@@ -567,7 +531,7 @@ HWND GetScrollContentWindow(HWND scrollView) {
 
 namespace internal {
 bool RegisterScrollViewClasses() {
-    return RegisterControlClass(ScrollViewClass, ScrollProc) &&
+    return RegisterControlClass(ScrollViewClass, SafeWindowProc<ScrollProcImpl>) &&
            RegisterControlClass(ScrollViewportClass, ViewportProc) &&
            RegisterControlClass(ScrollContentClass, ContentProc);
 }

@@ -55,7 +55,7 @@ their parts can have independent colors, thicknesses, and corner radii.
 
 ## Controls and events
 
-The public gallery includes Button, IconButton, Label, ImageView, Separator, Panel, TextBox,
+The public gallery includes Button (text, icon, or both), Label, ImageView, Separator, Panel, TextBox,
 NumericBox, Checkbox, Toggle, Slider, ProgressBar, ComboBox, ScrollView, and Tooltip. TextBox uses
 native text services while its visible frame, states, and validation treatment are custom painted.
 

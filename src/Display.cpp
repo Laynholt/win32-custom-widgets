@@ -8,15 +8,11 @@
 
 #include <algorithm>
 #include <memory>
-#include <new>
 
 namespace wcw {
 namespace {
 
-constexpr wchar_t LabelClass[] = L"WcwLabel";
-constexpr wchar_t ImageClass[] = L"WcwImageView";
-constexpr wchar_t SeparatorClass[] = L"WcwSeparator";
-constexpr wchar_t PanelClass[] = L"WcwPanel";
+constexpr wchar_t DisplayClass[] = L"WcwDisplay";
 
 enum class DisplayKind { Label, Image, Separator, Panel };
 
@@ -88,7 +84,7 @@ void PaintDisplay(HWND window, const DisplayState& state) {
             wchar_t text[1024]{};
             const int length = GetWindowTextW(window, text, 1024);
             paint::Text(buffer.dc(), std::wstring_view(text, length), bounds,
-                        paint::Font(internal::ResolveLabelFont(theme, local), dpi),
+                        paint::Font(local.font.value_or(theme.label), dpi),
                         IsWindowEnabled(window) ? style.text : style.disabledText,
                         DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
         } else if (state.kind == DisplayKind::Image && state.source.handle) {
@@ -159,25 +155,14 @@ LRESULT DisplayProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     }
 }
 
-LRESULT CALLBACK DisplayProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return DisplayProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
-HWND Create(const wchar_t* className, const ControlOptions& options, DisplayState state) {
+HWND Create(const ControlOptions& options, DisplayState state) {
     if (!options.parent || !IsWindow(options.parent)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return nullptr;
     }
     const auto dpi = paint::Dpi(options.parent);
     const auto window = CreateWindowExW(
-        0, className, options.text.c_str(), WS_CHILD | (options.style & ~WS_TABSTOP),
+        0, DisplayClass, options.text.c_str(), WS_CHILD | (options.style & ~WS_TABSTOP),
         DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(), &state);
@@ -196,32 +181,25 @@ HWND Create(const wchar_t* className, const ControlOptions& options, DisplayStat
 } // namespace
 
 HWND CreateLabel(const ControlOptions& options) {
-    return Create(LabelClass, options, {DisplayKind::Label});
+    return Create(options, {DisplayKind::Label});
 }
 
 HWND CreateImageView(const ControlOptions& options, ImageSource source, ImageMode mode) {
-    return Create(ImageClass, options, {DisplayKind::Image, source, mode});
+    return Create(options, {DisplayKind::Image, source, mode});
 }
 
 HWND CreateSeparator(const ControlOptions& options, bool vertical) {
-    return Create(SeparatorClass, options,
+    return Create(options,
                   {DisplayKind::Separator, {}, ImageMode::Contain, vertical});
 }
 
 HWND CreatePanel(const ControlOptions& options) {
-    return Create(PanelClass, options, {DisplayKind::Panel});
+    return Create(options, {DisplayKind::Panel});
 }
 
 namespace internal {
-FontSpec ResolveLabelFont(const Theme& theme, const StyleOverride& local) {
-    return local.font.value_or(theme.label);
-}
-
 bool RegisterDisplayClasses() {
-    return RegisterControlClass(LabelClass, DisplayProc) &&
-           RegisterControlClass(ImageClass, DisplayProc) &&
-           RegisterControlClass(SeparatorClass, DisplayProc) &&
-           RegisterControlClass(PanelClass, DisplayProc);
+    return RegisterControlClass(DisplayClass, SafeWindowProc<DisplayProcImpl>);
 }
 } // namespace internal
 } // namespace wcw

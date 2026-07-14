@@ -10,7 +10,7 @@ The first consumer is HoradricTimer. Other Win32 applications can consume the sa
 
 The first release provides:
 
-- Button and IconButton
+- Button with text, an icon, or both
 - TextBox
 - NumericBox
 - ComboBox with a custom popup
@@ -113,7 +113,7 @@ ImageView accepts `HICON` or `HBITMAP` and supports contain, cover, and stretch 
 
 ## Control Behavior
 
-### Button And IconButton
+### Button
 
 Buttons support text, icon, combined text and icon, default action, cancel action, enabled, hovered, pressed, focused, and checked-style visual states. Mouse release inside the control and keyboard activation with Space or Enter produce `BN_CLICKED`.
 
@@ -194,4 +194,3 @@ Completion requires fresh Debug and Release builds, CTest success, demo launch, 
 HoradricTimer uses only the library's public headers and namespaced CMake target. The application owns layout, settings, WIC image loading, overlay drawing, input hooks, timers, tray behavior, and persistence.
 
 Every visible settings-window widget is either a Win32 Custom Widgets control or application-painted content. HoradricTimer does not copy private paint helpers from YoutubeDownloader and does not create visibly default Win32 controls.
-

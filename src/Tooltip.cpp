@@ -1,7 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
 #include <wcw/Controls.h>
 #include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
@@ -47,7 +43,6 @@ struct TooltipManager {
 
 thread_local TooltipManager manager;
 
-LRESULT CALLBACK TooltipProc(HWND, UINT, WPARAM, LPARAM);
 LRESULT CALLBACK TargetProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 LRESULT CALLBACK CallHookProc(int, WPARAM, LPARAM);
 LRESULT CALLBACK MessageHookProc(int, WPARAM, LPARAM);
@@ -307,17 +302,6 @@ LRESULT TooltipProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     }
 }
 
-LRESULT CALLBACK TooltipProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return TooltipProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
 bool DismissesTooltip(UINT message, WPARAM wParam) {
     switch (message) {
     case WM_KEYDOWN:
@@ -519,6 +503,8 @@ void HideAllTooltips() {
 }
 
 namespace internal {
-bool RegisterTooltipClass() { return RegisterControlClass(TooltipClass, TooltipProc); }
+bool RegisterTooltipClass() {
+    return RegisterControlClass(TooltipClass, SafeWindowProc<TooltipProcImpl>);
+}
 } // namespace internal
 } // namespace wcw

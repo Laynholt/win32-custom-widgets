@@ -1,7 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
 #include <wcw/Controls.h>
 #include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
@@ -12,14 +8,12 @@
 
 #include <algorithm>
 #include <memory>
-#include <new>
 #include <windowsx.h>
 
 namespace wcw {
 namespace {
 
-constexpr wchar_t CheckboxClass[] = L"WcwCheckbox";
-constexpr wchar_t ToggleClass[] = L"WcwToggle";
+constexpr wchar_t BooleanClass[] = L"WcwBoolean";
 
 struct BooleanCreate {
     const CheckableOptions* options;
@@ -35,13 +29,7 @@ struct BooleanState {
 };
 
 bool IsBooleanWindow(HWND window) {
-    wchar_t name[32]{};
-    if (!IsWindow(window) || !GetClassNameW(window, name, 32) ||
-        (wcscmp(name, CheckboxClass) != 0 && wcscmp(name, ToggleClass) != 0)) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return false;
-    }
-    return true;
+    return internal::IsLibraryWindow(window, BooleanClass);
 }
 
 bool Inside(HWND window, LPARAM position) {
@@ -133,7 +121,7 @@ void PaintControl(HWND window, const BooleanState& state) {
         }
         if (GetFocus() == window) {
             const Gdiplus::RectF focus{0, 0, static_cast<float>(bounds.right), height};
-            paint::Focus(graphics, focus, paint::ToPixels(style.cornerRadiusDip, dpi), style.focus,
+            paint::Border(graphics, focus, paint::ToPixels(style.cornerRadiusDip, dpi), style.focus,
                          paint::ToPixels(style.focusWidthDip, dpi));
         }
     }
@@ -238,18 +226,7 @@ LRESULT BooleanProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     }
 }
 
-LRESULT CALLBACK BooleanProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return BooleanProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
-HWND CreateBoolean(const wchar_t* className, const CheckableOptions& options, bool toggle) {
+HWND CreateBoolean(const CheckableOptions& options, bool toggle) {
     if (!options.parent || !IsWindow(options.parent)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return nullptr;
@@ -257,7 +234,7 @@ HWND CreateBoolean(const wchar_t* className, const CheckableOptions& options, bo
     const auto dpi = paint::Dpi(options.parent);
     const BooleanCreate create{&options, toggle};
     const auto window = CreateWindowExW(
-        0, className, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
+        0, BooleanClass, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
         DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(),
@@ -271,11 +248,11 @@ HWND CreateBoolean(const wchar_t* className, const CheckableOptions& options, bo
 } // namespace
 
 HWND CreateCheckbox(const CheckableOptions& options) {
-    return CreateBoolean(CheckboxClass, options, false);
+    return CreateBoolean(options, false);
 }
 
 HWND CreateToggle(const CheckableOptions& options) {
-    return CreateBoolean(ToggleClass, options, true);
+    return CreateBoolean(options, true);
 }
 
 bool SetChecked(HWND control, bool checked) {
@@ -290,8 +267,7 @@ bool GetChecked(HWND control) {
 
 namespace internal {
 bool RegisterBooleanControlClasses() {
-    return RegisterControlClass(CheckboxClass, BooleanProc) &&
-           RegisterControlClass(ToggleClass, BooleanProc);
+    return RegisterControlClass(BooleanClass, SafeWindowProc<BooleanProcImpl>);
 }
 } // namespace internal
 } // namespace wcw

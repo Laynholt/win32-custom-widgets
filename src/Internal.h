@@ -4,6 +4,8 @@
 
 #include <windows.h>
 
+#include <new>
+
 namespace wcw::internal {
 
 inline constexpr UINT ThemeChangedMessage = WM_APP + 0x570;
@@ -14,9 +16,33 @@ bool RegisterControlClass(const wchar_t* name, WNDPROC procedure,
 
 void RegisterWindow(HWND window);
 void UnregisterWindow(HWND window);
-bool IsLibraryWindow(HWND window);
+bool IsLibraryWindow(HWND window, const wchar_t* className = nullptr);
 StyleOverride WindowStyleOverride(HWND window);
-FontSpec ResolveLabelFont(const Theme& theme, const StyleOverride& local);
+
+inline StyleOverride OverlayStyle(StyleOverride result, const StyleOverride& local) {
+#define WCW_OVERLAY(member) if (local.member) result.member = local.member
+    WCW_OVERLAY(background); WCW_OVERLAY(foreground); WCW_OVERLAY(mutedForeground);
+    WCW_OVERLAY(border); WCW_OVERLAY(hover); WCW_OVERLAY(pressed); WCW_OVERLAY(selected);
+    WCW_OVERLAY(disabledSurface); WCW_OVERLAY(disabledText); WCW_OVERLAY(focus);
+    WCW_OVERLAY(accent); WCW_OVERLAY(danger); WCW_OVERLAY(font); WCW_OVERLAY(borderWidthDip);
+    WCW_OVERLAY(focusWidthDip); WCW_OVERLAY(paddingXDip); WCW_OVERLAY(paddingYDip);
+    WCW_OVERLAY(spacingDip); WCW_OVERLAY(controlHeightDip); WCW_OVERLAY(cornerRadiusDip);
+    WCW_OVERLAY(trackThicknessDip); WCW_OVERLAY(thumbSizeDip); WCW_OVERLAY(indicatorSizeDip);
+#undef WCW_OVERLAY
+    return result;
+}
+
+template <LRESULT (*Procedure)(HWND, UINT, WPARAM, LPARAM)>
+LRESULT CALLBACK SafeWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    try {
+        return Procedure(window, message, wParam, lParam);
+    } catch (const std::bad_alloc&) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+    } catch (...) {
+        SetLastError(ERROR_GEN_FAILURE);
+    }
+    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
+}
 
 // Handles messages shared by every fully buffer-painted library control.
 bool HandleControlMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,

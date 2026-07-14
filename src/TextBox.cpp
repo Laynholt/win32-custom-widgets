@@ -148,7 +148,7 @@ void PaintTextBox(HWND window, TextBoxState& state) {
                       state.validationError ? style.danger : style.border,
                       paint::ToPixels(style.borderWidthDip, dpi));
         if (GetFocus() == state.edit)
-            paint::Focus(graphics, shape, radius, style.focus,
+            paint::Border(graphics, shape, radius, style.focus,
                          paint::ToPixels(style.focusWidthDip, dpi));
         if (GetWindowTextLengthW(state.edit) == 0 && GetFocus() != state.edit &&
             !state.placeholder.empty()) {
@@ -358,17 +358,6 @@ LRESULT TextBoxProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-LRESULT CALLBACK TextBoxProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return TextBoxProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
 HWND Create(const TextBoxOptions& options, const NumericBoxOptions* numeric) {
     if (!options.parent || !IsWindow(options.parent) ||
         GetWindowThreadProcessId(options.parent, nullptr) != GetCurrentThreadId()) {
@@ -415,9 +404,7 @@ bool SetValidationError(HWND textBox, bool error) {
 namespace internal {
 
 bool IsTextBoxWindow(HWND window, bool numericOnly) {
-    wchar_t className[32]{};
-    if (!IsLibraryWindow(window) ||
-        GetClassNameW(window, className, 32) == 0 || std::wstring_view(className) != TextBoxClass ||
+    if (!IsLibraryWindow(window, TextBoxClass) ||
         (numericOnly && SendMessageW(window, NumericGetValueMessage, 0, 0) == FALSE)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return false;
@@ -427,7 +414,9 @@ bool IsTextBoxWindow(HWND window, bool numericOnly) {
 
 HWND CreateNumericBoxWindow(const NumericBoxOptions& options) { return Create(options, &options); }
 
-bool RegisterTextBoxClass() { return RegisterControlClass(TextBoxClass, TextBoxProc); }
+bool RegisterTextBoxClass() {
+    return RegisterControlClass(TextBoxClass, SafeWindowProc<TextBoxProcImpl>);
+}
 
 } // namespace internal
 } // namespace wcw

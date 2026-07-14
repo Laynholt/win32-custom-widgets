@@ -9,7 +9,6 @@
 #include <gdiplus.h>
 
 #include <algorithm>
-#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -17,10 +16,8 @@ namespace wcw {
 namespace {
 
 struct RuntimeState {
-    std::mutex mutex;
     HINSTANCE instance{};
     ULONG_PTR gdiplusToken{};
-    bool commonControlsInitialized{};
     bool oleInitialized{};
     DWORD uiThread{};
     Theme theme{DarkTheme()};
@@ -65,7 +62,6 @@ void UpdateWindowRegion(HWND window) {
 
 bool Initialize(HINSTANCE instance) {
     auto& state = State();
-    std::lock_guard lock(state.mutex);
     const auto thread = GetCurrentThreadId();
     if (state.gdiplusToken) {
         if (state.uiThread == thread) return true;
@@ -81,16 +77,13 @@ bool Initialize(HINSTANCE instance) {
     if (FAILED(ole) && ole != RPC_E_CHANGED_MODE) return false;
     state.oleInitialized = SUCCEEDED(ole);
 
-    if (!state.commonControlsInitialized) {
-        INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES};
-        if (!InitCommonControlsEx(&controls)) {
-            if (state.oleInitialized) {
-                OleUninitialize();
-                state.oleInitialized = false;
-            }
-            return false;
+    INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES};
+    if (!InitCommonControlsEx(&controls)) {
+        if (state.oleInitialized) {
+            OleUninitialize();
+            state.oleInitialized = false;
         }
-        state.commonControlsInitialized = true;
+        return false;
     }
 
     Gdiplus::GdiplusStartupInput input;
@@ -124,7 +117,6 @@ bool Initialize(HINSTANCE instance) {
 
 void Shutdown() {
     auto& state = State();
-    std::lock_guard lock(state.mutex);
     if (!state.gdiplusToken) return;
     if (state.uiThread != GetCurrentThreadId()) {
         SetLastError(ERROR_INVALID_THREAD_ID);
@@ -146,7 +138,6 @@ void Shutdown() {
 
 void SetTheme(const Theme& theme) {
     auto& state = State();
-    std::lock_guard lock(state.mutex);
     state.theme = theme;
     paint::ClearFontCache();
     for (const auto window : state.windows) {
@@ -156,7 +147,6 @@ void SetTheme(const Theme& theme) {
 
 Theme GetTheme() {
     auto& state = State();
-    std::lock_guard lock(state.mutex);
     return state.theme;
 }
 
@@ -203,7 +193,16 @@ void UnregisterWindow(HWND window) {
     State().overrides.erase(window);
 }
 
-bool IsLibraryWindow(HWND window) { return IsOwnedLibraryWindow(window); }
+bool IsLibraryWindow(HWND window, const wchar_t* className) {
+    if (!IsOwnedLibraryWindow(window)) return false;
+    wchar_t actual[32]{};
+    if (className && (!GetClassNameW(window, actual, 32) ||
+                      lstrcmpW(actual, className) != 0)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return false;
+    }
+    return true;
+}
 
 StyleOverride WindowStyleOverride(HWND window) {
     const auto found = State().overrides.find(window);

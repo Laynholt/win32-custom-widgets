@@ -95,7 +95,7 @@ struct ImageSource {
 struct ComboItem {
     std::wstring text;
     std::intptr_t id{};
-    std::optional<ImageSource> image;
+    ImageSource image;
 };
 
 struct ComboBoxOptions : ControlOptions {
@@ -146,7 +146,6 @@ struct SelectionChangedNotification {
 enum class ImageMode { Contain, Cover, Stretch };
 
 HWND CreateButton(const ButtonOptions& options);
-HWND CreateIconButton(const ButtonOptions& options);
 HWND CreateLabel(const ControlOptions& options);
 HWND CreateImageView(const ControlOptions& options, ImageSource source,
                      ImageMode mode = ImageMode::Contain);

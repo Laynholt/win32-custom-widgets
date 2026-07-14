@@ -1,7 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
 #include <wcw/Controls.h>
 #include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
@@ -15,7 +11,6 @@
 #include <cmath>
 #include <commctrl.h>
 #include <memory>
-#include <new>
 #include <utility>
 #include <windowsx.h>
 
@@ -52,13 +47,7 @@ ComboState* State(HWND combo) {
 }
 
 bool IsComboWindow(HWND window) {
-    wchar_t name[32]{};
-    if (!IsWindow(window) || !GetClassNameW(window, name, 32) || wcscmp(name, ComboClass) != 0 ||
-        !internal::IsLibraryWindow(window)) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return false;
-    }
-    return true;
+    return internal::IsLibraryWindow(window, ComboClass);
 }
 
 std::intptr_t ItemId(const internal::ComboModel& model, int index) {
@@ -144,12 +133,12 @@ void DragScrollbar(HWND popup, PopupState& popupState, int y) {
     InvalidateRect(popup, nullptr, FALSE);
 }
 
-void DrawImage(HDC dc, const std::optional<ImageSource>& source, RECT bounds) {
-    if (!source || !source->handle) return;
-    if (source->kind == ImageSource::Kind::Icon)
-        paint::Icon(dc, static_cast<HICON>(source->handle), bounds);
-    else if (source->kind == ImageSource::Kind::Bitmap)
-        paint::Bitmap(dc, static_cast<HBITMAP>(source->handle), bounds);
+void DrawImage(HDC dc, const ImageSource& source, RECT bounds) {
+    if (!source.handle) return;
+    if (source.kind == ImageSource::Kind::Icon)
+        paint::Icon(dc, static_cast<HICON>(source.handle), bounds);
+    else if (source.kind == ImageSource::Kind::Bitmap)
+        paint::Bitmap(dc, static_cast<HBITMAP>(source.handle), bounds);
 }
 
 void PaintCombo(HWND window, const ComboState& state) {
@@ -181,7 +170,7 @@ void PaintCombo(HWND window, const ComboState& state) {
         const int selected = state.model.Selection();
         if (selected >= 0) {
             const auto& item = state.model.Items()[selected];
-            if (item.image) {
+            if (item.image.handle) {
                 const int size = std::min(DipToPx(18, dpi),
                                           static_cast<int>(bounds.bottom) - 2 * padding);
                 RECT imageBounds{textBounds.left, (bounds.bottom - size) / 2,
@@ -201,7 +190,7 @@ void PaintCombo(HWND window, const ComboState& state) {
         graphics.DrawLine(&pen, centerX - 4, centerY - 2, centerX, centerY + 2);
         graphics.DrawLine(&pen, centerX, centerY + 2, centerX + 4, centerY - 2);
         if (GetFocus() == window) {
-            paint::Focus(graphics, surface, radius, style.focus,
+            paint::Border(graphics, surface, radius, style.focus,
                          paint::ToPixels(style.focusWidthDip, dpi));
         }
     }
@@ -243,7 +232,7 @@ void PaintPopup(HWND window, const PopupState& popupState) {
             RECT textBounds{padding, row * rowHeight, bounds.right - scrollbarWidth - padding,
                             (row + 1) * rowHeight};
             const auto& item = comboState->model.Items()[index];
-            if (item.image) {
+            if (item.image.handle) {
                 const int size = std::min(DipToPx(18, dpi), rowHeight - 2 * padding);
                 RECT imageBounds{textBounds.left, row * rowHeight + (rowHeight - size) / 2,
                                  textBounds.left + size,
@@ -671,18 +660,6 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     }
 }
 
-template <LRESULT (*Procedure)(HWND, UINT, WPARAM, LPARAM)>
-LRESULT CALLBACK SafeProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return Procedure(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
 } // namespace
 
 HWND CreateComboBox(const ComboBoxOptions& options) {
@@ -725,8 +702,8 @@ int GetComboSelection(HWND comboBox) {
 
 namespace internal {
 bool RegisterComboBoxClasses() {
-    return RegisterControlClass(ComboClass, SafeProc<ComboProcImpl>) &&
-           RegisterControlClass(PopupClass, SafeProc<PopupProcImpl>);
+    return RegisterControlClass(ComboClass, SafeWindowProc<ComboProcImpl>) &&
+           RegisterControlClass(PopupClass, SafeWindowProc<PopupProcImpl>);
 }
 } // namespace internal
 } // namespace wcw

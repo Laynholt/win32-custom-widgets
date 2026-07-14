@@ -130,28 +130,24 @@ void Layout(Gallery& g) {
 }
 
 bool CreateGallery(Gallery& g) {
-    wcw::ButtonOptions button;
-    static_cast<wcw::ControlOptions&>(button) = Base(g.window, Dark, L"Dark");
+    wcw::ButtonOptions button{Base(g.window, Dark, L"Dark")};
     g.dark = wcw::CreateButton(button);
     static_cast<wcw::ControlOptions&>(button) = Base(g.window, Light, L"Light");
     g.light = wcw::CreateButton(button);
 
-    wcw::ButtonOptions accent;
-    static_cast<wcw::ControlOptions&>(accent) = Base(g.window, Accent, L"Accent override");
+    wcw::ButtonOptions accent{Base(g.window, Accent, L"Accent override")};
     accent.appearance.background = wcw::Color::FromRgb(0x7A, 0x48, 0xE8);
     accent.appearance.foreground = wcw::Color::FromRgb(0xFF, 0xFF, 0xFF);
     accent.appearance.cornerRadiusDip = 14.0f;
     g.accent = wcw::CreateButton(accent);
 
-    wcw::ButtonOptions disabled;
-    static_cast<wcw::ControlOptions&>(disabled) = Base(g.window, Disabled, L"Disabled button");
+    wcw::ButtonOptions disabled{Base(g.window, Disabled, L"Disabled button")};
     g.disabled = wcw::CreateButton(disabled);
     EnableWindow(g.disabled, FALSE);
 
-    wcw::ButtonOptions icon;
-    static_cast<wcw::ControlOptions&>(icon) = Base(g.window, 0, L"", L"Information");
+    wcw::ButtonOptions icon{Base(g.window, 0, L"", L"Information")};
     icon.icon = LoadIconW(nullptr, IDI_INFORMATION);
-    g.iconButton = wcw::CreateIconButton(icon);
+    g.iconButton = wcw::CreateButton(icon);
 
     g.label = wcw::CreateLabel(Base(g.window, 0, L"Win32 Custom Widgets gallery"));
     g.separator = wcw::CreateSeparator(Base(g.window, 0, L""));
@@ -159,29 +155,25 @@ bool CreateGallery(Gallery& g) {
     g.image = wcw::CreateImageView(Base(g.window, 0, L"", L"Application icon"),
                                    wcw::ImageSource(LoadIconW(nullptr, IDI_APPLICATION)));
 
-    wcw::TextBoxOptions text;
-    static_cast<wcw::ControlOptions&>(text) = Base(g.window, 0, L"", L"Text input with error");
+    wcw::TextBoxOptions text{Base(g.window, 0, L"", L"Text input with error")};
     text.placeholder = L"Validation error example";
     g.text = wcw::CreateTextBox(text);
     wcw::SetValidationError(g.text, true);
 
-    wcw::NumericBoxOptions numeric;
-    static_cast<wcw::ControlOptions&>(numeric) = Base(g.window, Numeric, L"", L"Numeric input");
+    wcw::NumericBoxOptions numeric{{Base(g.window, Numeric, L"", L"Numeric input")}};
     numeric.placeholder = L"Number";
     numeric.minimum = -10;
     numeric.maximum = 100;
     numeric.value = 25;
     g.numeric = wcw::CreateNumericBox(numeric);
 
-    wcw::CheckableOptions check;
-    static_cast<wcw::ControlOptions&>(check) = Base(g.window, Checkbox, L"Checkbox");
+    wcw::CheckableOptions check{Base(g.window, Checkbox, L"Checkbox")};
     check.checked = true;
     g.checkbox = wcw::CreateCheckbox(check);
     static_cast<wcw::ControlOptions&>(check) = Base(g.window, Toggle, L"Toggle");
     g.toggle = wcw::CreateToggle(check);
 
-    wcw::SliderOptions slider;
-    static_cast<wcw::ControlOptions&>(slider) = Base(g.window, Slider, L"", L"Value slider");
+    wcw::SliderOptions slider{Base(g.window, Slider, L"", L"Value slider")};
     slider.value = 40;
     slider.trackAppearance.background = wcw::Color::FromRgb(0x39, 0x39, 0x42);
     slider.trackAppearance.cornerRadiusDip = 2.0f;
@@ -194,24 +186,21 @@ bool CreateGallery(Gallery& g) {
     slider.value = g.radiusDip;
     g.radius = wcw::CreateSlider(slider);
 
-    wcw::ProgressBarOptions progress;
-    static_cast<wcw::ControlOptions&>(progress) = Base(g.window, 0, L"", L"Progress 65 percent");
+    wcw::ProgressBarOptions progress{Base(g.window, 0, L"", L"Progress 65 percent")};
     progress.value = 65;
     g.progress = wcw::CreateProgressBar(progress);
     progress.accessibleName = L"Indeterminate progress";
     progress.indeterminate = true;
     g.activity = wcw::CreateProgressBar(progress);
 
-    wcw::ComboBoxOptions combo;
-    static_cast<wcw::ControlOptions&>(combo) = Base(g.window, Combo, L"", L"Icon and text choices");
+    wcw::ComboBoxOptions combo{Base(g.window, Combo, L"", L"Icon and text choices")};
     combo.items = {{L"Information", 1, wcw::ImageSource(LoadIconW(nullptr, IDI_INFORMATION))},
                    {L"Warning", 2, wcw::ImageSource(LoadIconW(nullptr, IDI_WARNING))},
-                   {L"Text only", 3, std::nullopt}};
+                   {L"Text only", 3, {}}};
     combo.selectedIndex = 0;
     g.combo = wcw::CreateComboBox(combo);
 
-    wcw::ScrollViewOptions scroll;
-    static_cast<wcw::ControlOptions&>(scroll) = Base(g.window, 0, L"", L"Scrollable widget examples");
+    wcw::ScrollViewOptions scroll{Base(g.window, 0, L"", L"Scrollable widget examples")};
     scroll.contentExtent = {620, 520};
     scroll.trackAppearance.background = wcw::Color::FromRgb(0x24, 0x24, 0x29);
     scroll.trackAppearance.cornerRadiusDip = 4.0f;
@@ -223,12 +212,10 @@ bool CreateGallery(Gallery& g) {
     auto nested = Base(content, 0, L"Nested controls remain keyboard accessible");
     nested.bounds = {18, 18, 360, 30};
     g.nested.emplace_back(wcw::CreateLabel(nested), nested.bounds);
-    wcw::ButtonOptions nestedButton;
-    static_cast<wcw::ControlOptions&>(nestedButton) = Base(content, 0, L"Nested button");
+    wcw::ButtonOptions nestedButton{Base(content, 0, L"Nested button")};
     nestedButton.bounds = {18, 62, 180, 36};
     g.nested.emplace_back(wcw::CreateButton(nestedButton), nestedButton.bounds);
-    wcw::TextBoxOptions nestedText;
-    static_cast<wcw::ControlOptions&>(nestedText) = Base(content, 0, L"", L"Nested text input");
+    wcw::TextBoxOptions nestedText{Base(content, 0, L"", L"Nested text input")};
     nestedText.bounds = {18, 112, 300, 38};
     nestedText.placeholder = L"Tab into the scroll content";
     g.nested.emplace_back(wcw::CreateTextBox(nestedText), nestedText.bounds);

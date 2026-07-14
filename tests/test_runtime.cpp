@@ -17,6 +17,10 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
+LRESULT TestProc(HWND, UINT, WPARAM, LPARAM) { return 42; }
+
+LRESULT ThrowingProc(HWND, UINT, WPARAM, LPARAM) { throw std::bad_alloc{}; }
+
 } // namespace
 
 int main() {
@@ -48,6 +52,8 @@ int main() {
     CHECK(!wcw::ClearStyleOverride(parent));
 
     wcw::internal::RegisterWindow(parent);
+    CHECK(wcw::internal::IsLibraryWindow(parent, windowClass.lpszClassName));
+    CHECK(!wcw::internal::IsLibraryWindow(parent, L"NotTheParentClass"));
     CHECK(wcw::SetStyleOverride(parent, overrideStyle));
     CHECK(wcw::internal::WindowStyleOverride(parent).background.has_value());
     CHECK(wcw::ClearStyleOverride(parent));
@@ -74,6 +80,11 @@ int main() {
     checkWorkerWindow.set_value();
     CHECK(workerWindowUnchanged.get_future().get());
     worker.join();
+
+    CHECK(wcw::internal::SafeWindowProc<TestProc>(nullptr, WM_NULL, 0, 0) == 42);
+    SetLastError(ERROR_SUCCESS);
+    CHECK(wcw::internal::SafeWindowProc<ThrowingProc>(nullptr, WM_NCCREATE, 0, 0) == FALSE);
+    CHECK(GetLastError() == ERROR_NOT_ENOUGH_MEMORY);
 
     const auto screen = GetDC(nullptr);
     const auto target = CreateCompatibleDC(screen);

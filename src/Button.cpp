@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <new>
 #include <windowsx.h>
 
 namespace wcw {
@@ -101,7 +100,7 @@ void PaintButton(HWND window, ButtonState& state) {
                         state.alignment | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         if (GetFocus() == window)
-            paint::Focus(graphics, shape, radius, style.focus,
+            paint::Border(graphics, shape, radius, style.focus,
                          paint::ToPixels(style.focusWidthDip, dpi));
     }
     EndPaint(window, &ps);
@@ -203,18 +202,7 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     }
 }
 
-LRESULT CALLBACK ButtonProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return ButtonProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
-HWND Create(const wchar_t* className, const ButtonOptions& options) {
+HWND Create(const ButtonOptions& options) {
     if (!options.parent || !IsWindow(options.parent)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return nullptr;
@@ -222,7 +210,7 @@ HWND Create(const wchar_t* className, const ButtonOptions& options) {
     const auto dpi = paint::Dpi(options.parent);
     const int id = options.isCancel ? IDCANCEL : options.id;
     const auto window = CreateWindowExW(
-        0, className, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
+        0, ButtonClass, options.text.c_str(), WS_CHILD | WS_TABSTOP | options.style,
         DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), internal::Instance(),
@@ -241,12 +229,11 @@ HWND Create(const wchar_t* className, const ButtonOptions& options) {
 
 } // namespace
 
-HWND CreateButton(const ButtonOptions& options) { return Create(ButtonClass, options); }
-HWND CreateIconButton(const ButtonOptions& options) { return Create(ButtonClass, options); }
+HWND CreateButton(const ButtonOptions& options) { return Create(options); }
 
 namespace internal {
 bool RegisterButtonClasses() {
-    return RegisterControlClass(ButtonClass, ButtonProc);
+    return RegisterControlClass(ButtonClass, SafeWindowProc<ButtonProcImpl>);
 }
 } // namespace internal
 } // namespace wcw

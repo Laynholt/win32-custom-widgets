@@ -1,7 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
 #include "ScrollModel.h"
 
 #include <algorithm>
@@ -10,12 +6,12 @@ namespace wcw::internal {
 
 bool ScrollModel::SetExtent(ScrollExtentDip extent) {
     extent_ = {std::max(0.0f, extent.width), std::max(0.0f, extent.height)};
-    return ClampOffset();
+    return SetOffset(offset_);
 }
 
 bool ScrollModel::SetViewport(ScrollExtentDip viewport) {
     viewport_ = {std::max(0.0f, viewport.width), std::max(0.0f, viewport.height)};
-    return ClampOffset();
+    return SetOffset(offset_);
 }
 
 bool ScrollModel::SetOffset(ScrollOffsetDip offset) {
@@ -39,7 +35,5 @@ int ScrollModel::ConsumeWheelDelta(int delta, bool horizontal) {
     remainder %= WHEEL_DELTA;
     return notches;
 }
-
-bool ScrollModel::ClampOffset() { return SetOffset(offset_); }
 
 } // namespace wcw::internal

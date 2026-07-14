@@ -8,10 +8,6 @@
 
 #include <array>
 
-namespace wcw::internal {
-FontSpec ResolveLabelFont(const Theme& theme, const StyleOverride& local);
-}
-
 namespace {
 
 int clicks;
@@ -99,22 +95,16 @@ int main() {
                              .bounds = {0.6f, 0.6f, 100.6f, 30.6f},
                              .text = L"Button",
                              .appearance = {.cornerRadiusDip = 0.0f}};
-    wcw::ButtonOptions buttonOptions;
-    static_cast<wcw::ControlOptions&>(buttonOptions) = base;
+    wcw::ButtonOptions buttonOptions{base};
 
     const auto button = wcw::CreateButton(buttonOptions);
     buttonOptions.id = 11;
     buttonOptions.text = L"Icon";
-    const auto iconButton = wcw::CreateIconButton(buttonOptions);
+    const auto iconButton = wcw::CreateButton(buttonOptions);
     base.id = 12;
     base.text = L"Label";
     base.appearance.font = wcw::FontSpec{L"Arial", 19.0f, 700, true};
     const auto label = wcw::CreateLabel(base);
-    const auto labelFont = wcw::internal::ResolveLabelFont(wcw::GetTheme(), base.appearance);
-    CHECK(labelFont.family == L"Arial");
-    CHECK(labelFont.sizeDip == 19.0f);
-    CHECK(labelFont.weight == 700);
-    CHECK(labelFont.italic);
     base.id = 13;
     base.text = L"Image";
     const auto image = wcw::CreateImageView(base, {}, wcw::ImageMode::Contain);

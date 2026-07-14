@@ -1,7 +1,3 @@
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-
 #include <wcw/Controls.h>
 #include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
@@ -14,7 +10,6 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
-#include <new>
 
 namespace wcw {
 namespace {
@@ -34,13 +29,7 @@ struct ProgressState {
 };
 
 bool IsProgressWindow(HWND window) {
-    wchar_t name[32]{};
-    if (!IsWindow(window) || !GetClassNameW(window, name, 32) ||
-        wcscmp(name, ProgressBarClass) != 0) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return false;
-    }
-    return true;
+    return internal::IsLibraryWindow(window, ProgressBarClass);
 }
 
 void UpdateTimer(HWND window, ProgressState& state) {
@@ -191,17 +180,6 @@ LRESULT ProgressProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam
     }
 }
 
-LRESULT CALLBACK ProgressProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    try {
-        return ProgressProcImpl(window, message, wParam, lParam);
-    } catch (const std::bad_alloc&) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-    } catch (...) {
-        SetLastError(ERROR_GEN_FAILURE);
-    }
-    return message == WM_NCCREATE ? FALSE : DefWindowProcW(window, message, wParam, lParam);
-}
-
 } // namespace
 
 HWND CreateProgressBar(const ProgressBarOptions& options) {
@@ -260,6 +238,8 @@ bool SetProgressIndeterminate(HWND progressBar, bool indeterminate) {
 }
 
 namespace internal {
-bool RegisterProgressBarClass() { return RegisterControlClass(ProgressBarClass, ProgressProc); }
+bool RegisterProgressBarClass() {
+    return RegisterControlClass(ProgressBarClass, SafeWindowProc<ProgressProcImpl>);
+}
 } // namespace internal
 } // namespace wcw
