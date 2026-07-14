@@ -40,7 +40,10 @@ bool Inside(HWND window, LPARAM position) {
 void ActivateButton(HWND window, ButtonState& state) {
     if (!IsWindowEnabled(window)) return;
     if (!state.menuItems.empty()) {
-        if (state.menuOpen) return;
+        if (state.menuOpen) {
+            internal::CancelPopupMenu(window);
+            return;
+        }
         RECT anchor{};
         GetWindowRect(window, &anchor);
         state.menuOpen = true;

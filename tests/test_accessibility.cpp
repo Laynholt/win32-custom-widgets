@@ -19,6 +19,7 @@ int stateEvents;
 int menuCommand;
 int keyboardMenuCommand;
 HWND menuButton;
+bool closeFallbackFired;
 
 void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child,
                            DWORD, DWORD) {
@@ -141,6 +142,22 @@ void CALLBACK InspectAccessibleMenu(HWND owner, UINT, UINT_PTR timer, DWORD) {
     CHECK(action == S_OK);
     if (action != S_OK) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
     menuAccessible->Release();
+}
+
+void CALLBACK CloseMenuFallback(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    closeFallbackFired = true;
+    if (const auto popup = FindWindowW(L"WcwMenuPopup", nullptr))
+        SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
+void CALLBACK CloseMenuWithButtonDefaultAction(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    auto* buttonAccessible = Accessible(menuButton);
+    CHECK(TextProperty(buttonAccessible, &IAccessible::get_accDefaultAction) == L"Close");
+    CHECK(buttonAccessible->accDoDefaultAction(Self()) == S_OK);
+    buttonAccessible->Release();
+    SetTimer(owner, 4, 1, CloseMenuFallback);
 }
 
 struct ThreadCheck {
@@ -412,6 +429,15 @@ int main() {
     CHECK(TextProperty(menuButtonAccessible, &IAccessible::get_accDefaultAction) == L"Open");
     PumpEvents();
     CHECK(stateEvents == 4);
+
+    menuCommand = 0;
+    closeFallbackFired = false;
+    SetTimer(parent, 3, 1, CloseMenuWithButtonDefaultAction);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    KillTimer(parent, 4);
+    CHECK(!closeFallbackFired);
+    CHECK(menuCommand == 0);
+    CHECK((State(menuButtonAccessible) & STATE_SYSTEM_COLLAPSED) != 0);
     menuButtonAccessible->Release();
 
     wcw::ScrollViewOptions scrollOptions;
