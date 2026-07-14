@@ -6,7 +6,7 @@ add_library(Win32CustomWidgets STATIC src/Theme.cpp src/Style.cpp src/Geometry.c
                                       src/TextBox.cpp src/NumericModel.cpp src/NumericBox.cpp
                                       src/BooleanControl.cpp src/Slider.cpp src/ProgressBar.cpp
                                       src/ComboModel.cpp src/ComboBox.cpp src/ScrollModel.cpp
-                                      src/ScrollView.cpp src/Tooltip.cpp src/MenuModel.cpp)
+                                      src/ScrollView.cpp src/Tooltip.cpp src/MenuModel.cpp src/Menu.cpp)
 add_library(Win32CustomWidgets::Win32CustomWidgets ALIAS Win32CustomWidgets)
 target_include_directories(Win32CustomWidgets PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)

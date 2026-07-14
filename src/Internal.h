@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <new>
+#include <vector>
 
 namespace wcw::internal {
 
@@ -56,6 +57,10 @@ bool RegisterProgressBarClass();
 bool RegisterComboBoxClasses();
 bool RegisterScrollViewClasses();
 bool RegisterTooltipClass();
+bool RegisterMenuClass();
+bool ShowPopupMenu(HWND commandTarget, HWND source, RECT anchor,
+                   std::vector<MenuItem> items, const StyleOverride& appearance);
+void CancelPopupMenu(HWND source);
 
 inline constexpr UINT TextBoxSetTextMessage = WM_APP + 0x571;
 inline constexpr UINT TextBoxGetTextMessage = WM_APP + 0x572;
