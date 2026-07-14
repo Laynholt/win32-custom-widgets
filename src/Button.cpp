@@ -161,7 +161,8 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
         return DefWindowProcW(window, message, wParam, lParam);
     case WM_GETDLGCODE:
         return DLGC_BUTTON |
-               (state && state->isDefault ? DLGC_DEFPUSHBUTTON : DLGC_UNDEFPUSHBUTTON);
+               (state && state->isDefault ? DLGC_DEFPUSHBUTTON : DLGC_UNDEFPUSHBUTTON) |
+               (state && !state->menuItems.empty() ? DLGC_WANTARROWS : 0);
     case WM_SETFOCUS:
         InvalidateRect(window, nullptr, FALSE);
         return 0;

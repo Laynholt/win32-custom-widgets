@@ -63,6 +63,28 @@ LRESULT CALLBACK ParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
+INT_PTR CALLBACK DialogProc(HWND, UINT message, WPARAM wParam, LPARAM lParam) {
+    if (message == WM_COMMAND) {
+        commandId = LOWORD(wParam);
+        commandCode = HIWORD(wParam);
+        commandSource = lParam;
+        if (commandId == menuButtonId) ++buttonIdCommands;
+        popupAliveWhenCommand = Popup() != nullptr;
+        popupCountAtCommand = PopupCount();
+    }
+    return FALSE;
+}
+
+HWND TestDialog(HINSTANCE instance) {
+    struct alignas(DWORD) Template {
+        DLGTEMPLATE dialog{WS_POPUP | WS_CAPTION | DS_CONTROL, 0, 0, 0, 0, 200, 100};
+        WORD menu{};
+        WORD windowClass{};
+        WORD title{};
+    } dialogTemplate;
+    return CreateDialogIndirectParamW(instance, &dialogTemplate.dialog, nullptr, DialogProc, 0);
+}
+
 void CALLBACK SelectSecond(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     const auto popup = Popup();
@@ -326,6 +348,7 @@ int main() {
     SendMessageW(menuButton, BM_CLICK, 0, 0);
     CHECK(commandId == 301);
     CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(!popupAliveWhenCommand);
     CHECK(buttonIdCommands == 0);
     CHECK(SendMessageW(menuButton, wcw::internal::ButtonGetMenuStateMessage, 0, 0) == 1);
 
@@ -341,6 +364,7 @@ int main() {
     SendMessageW(menuButton, BM_CLICK, 0, 0);
     CHECK(commandId == 302);
     CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(!popupAliveWhenCommand);
     CHECK(buttonIdCommands == 0);
 
     ResetCommand();
@@ -348,6 +372,7 @@ int main() {
     SendMessageW(menuButton, WM_KEYDOWN, VK_DOWN, 0);
     CHECK(commandId == 302);
     CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(!popupAliveWhenCommand);
     CHECK(buttonIdCommands == 0);
 
     ResetCommand();
@@ -355,6 +380,7 @@ int main() {
     SendMessageW(menuButton, WM_SYSKEYDOWN, VK_DOWN, 1 << 29);
     CHECK(commandId == 302);
     CHECK(commandSource == reinterpret_cast<LPARAM>(menuButton));
+    CHECK(!popupAliveWhenCommand);
     CHECK(buttonIdCommands == 0);
 
     wcw::ButtonOptions normalButtonOptions;
@@ -364,6 +390,7 @@ int main() {
     normalButtonOptions.text = L"Normal";
     const auto normalButton = wcw::CreateButton(normalButtonOptions);
     CHECK(normalButton != nullptr);
+    CHECK((SendMessageW(normalButton, WM_GETDLGCODE, 0, 0) & DLGC_WANTARROWS) == 0);
     SetLastError(ERROR_SUCCESS);
     CHECK(!wcw::SetMenuItems(normalButton, replacementMenu));
     CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
@@ -375,6 +402,30 @@ int main() {
     SetLastError(ERROR_SUCCESS);
     CHECK(wcw::CreateMenuButton(invalidMenuButtonOptions) == nullptr);
     CHECK(GetLastError() == ERROR_INVALID_PARAMETER);
+
+    const auto dialog = TestDialog(instance);
+    CHECK(dialog != nullptr);
+    auto dialogMenuButtonOptions = menuButtonOptions;
+    dialogMenuButtonOptions.parent = dialog;
+    dialogMenuButtonOptions.id = 305;
+    dialogMenuButtonOptions.items = replacementMenu;
+    const auto dialogMenuButton = wcw::CreateMenuButton(dialogMenuButtonOptions);
+    CHECK(dialogMenuButton != nullptr);
+    CHECK((SendMessageW(dialogMenuButton, WM_GETDLGCODE, 0, 0) & DLGC_WANTARROWS) != 0);
+    ShowWindow(dialog, SW_SHOW);
+    ShowWindow(dialogMenuButton, SW_SHOW);
+    CHECK(SetFocus(dialogMenuButton) != nullptr || GetFocus() == dialogMenuButton);
+    menuButtonId = dialogMenuButtonOptions.id;
+    ResetCommand();
+    buttonIdCommands = 0;
+    SetTimer(dialog, 23, 1, SelectFirst);
+    MSG down{dialogMenuButton, WM_KEYDOWN, VK_DOWN, 0};
+    CHECK(IsDialogMessageW(dialog, &down));
+    KillTimer(dialog, 23);
+    CHECK(commandId == 302);
+    CHECK(commandSource == reinterpret_cast<LPARAM>(dialogMenuButton));
+    CHECK(!popupAliveWhenCommand);
+    CHECK(buttonIdCommands == 0);
 
     SetLastError(ERROR_SUCCESS);
     const wcw::ContextMenuOptions invalidOptions{{{.id = 0, .text = L"Bad"}}};
@@ -543,6 +594,8 @@ int main() {
 
     DestroyWindow(normalButton);
     DestroyWindow(menuButton);
+    DestroyWindow(dialogMenuButton);
+    DestroyWindow(dialog);
     DestroyWindow(focusWindow);
     wcw::Shutdown();
     DestroyWindow(parent);
