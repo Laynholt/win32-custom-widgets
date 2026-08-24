@@ -68,6 +68,13 @@ int HitTest(const MenuBarState& state, POINT point) {
     return -1;
 }
 
+void CancelPress(HWND window, MenuBarState& state) {
+    const bool changed = state.pressed;
+    state.pressed = false;
+    if (GetCapture() == window) ReleaseCapture();
+    if (changed) InvalidateRect(window, nullptr, FALSE);
+}
+
 void Activate(HWND bar, MenuBarState& state, int index) {
     if (index < 0 || index >= static_cast<int>(state.items.size())) return;
     const auto& item = state.items[index];
@@ -139,7 +146,10 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         state = created.release();
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
     }
-    if (message == WM_NCDESTROY && state) internal::CancelPopupMenu(window);
+    if (message == WM_NCDESTROY && state) {
+        internal::CancelPopupMenu(window);
+        CancelPress(window, *state);
+    }
     if (state && (message == WM_SIZE || message == WM_DPICHANGED ||
                   message == internal::ThemeChangedMessage))
         Layout(window, *state);
@@ -188,18 +198,18 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     case WM_CAPTURECHANGED:
-        if (state) state->pressed = false;
+        if (state) CancelPress(window, *state);
         return 0;
     case WM_CANCELMODE:
         if (state) {
-            state->pressed = false;
+            CancelPress(window, *state);
             internal::CancelPopupMenu(window);
             InvalidateRect(window, nullptr, FALSE);
         }
         return 0;
     case WM_ENABLE:
         if (state && !wParam) {
-            state->pressed = false;
+            CancelPress(window, *state);
             state->hot = -1;
             internal::CancelPopupMenu(window);
         }

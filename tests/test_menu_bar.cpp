@@ -133,6 +133,17 @@ int main() {
     CHECK(menuBar != nullptr);
     CHECK(GetClassLongPtrW(menuBar, GCW_ATOM) != 0);
 
+    SendMessageW(menuBar, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(8, 16));
+    CHECK(GetCapture() == menuBar);
+    SendMessageW(menuBar, WM_CANCELMODE, 0, 0);
+    CHECK(GetCapture() != menuBar);
+
+    SendMessageW(menuBar, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(8, 16));
+    CHECK(GetCapture() == menuBar);
+    EnableWindow(menuBar, FALSE);
+    CHECK(GetCapture() != menuBar);
+    EnableWindow(menuBar, TRUE);
+
     const auto other = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                                        0, 40, 40, 20, dialog, nullptr, instance, nullptr);
     CHECK(other != nullptr);
