@@ -55,9 +55,32 @@ their parts can have independent colors, thicknesses, and corner radii.
 
 ## Controls and events
 
-The public gallery includes Button (text, icon, or both), Label, ImageView, Separator, Panel, TextBox,
-NumericBox, Checkbox, Toggle, Slider, ProgressBar, ComboBox, ScrollView, and Tooltip. TextBox uses
+The public gallery includes Button (text, icon, or both), MenuBar, Label, ImageView, Separator, Panel,
+TextBox, NumericBox, Checkbox, Toggle, Slider, ProgressBar, ComboBox, ScrollView, and Tooltip. TextBox uses
 native text services while its visible frame, states, and validation treatment are custom painted.
+
+Menu bars are reusable child windows backed by the same `MenuItem` tree as menu buttons and context
+menus:
+
+```cpp
+wcw::MenuBarOptions menu;
+menu.parent = window;
+menu.bounds = {0, 0, 800, 32};
+menu.style = WS_VISIBLE;
+menu.items = {
+    {.text = L"&File", .children = {
+        {.id = 1001, .text = L"E&xit"},
+    }},
+};
+HWND menuBar = wcw::CreateMenuBar(menu);
+```
+
+Menu commands arrive through the parent `WM_COMMAND`: `LOWORD(wParam)` is the item ID and
+`lParam` identifies the menu bar `HWND`. Use `&` for keyboard mnemonics (`&&` renders a literal
+ampersand); `Alt`/`F10`, arrows, `Enter`, `Space`, and `Escape` provide standard menu navigation.
+`ControlOptions::appearance` styles the bar and `MenuBarOptions::menuAppearance` styles its popups.
+Calling `SetTheme` updates the menu bar and its open menus with the active theme; use
+`SetMenuBarItems` to replace the item tree.
 
 Buttons send `WM_COMMAND` with `BN_CLICKED`. Value, check, and selection changes arrive through
 `WM_NOTIFY` with `WCN_VALUE_CHANGED`, `WCN_CHECK_CHANGED`, and `WCN_SELECTION_CHANGED`; cast the

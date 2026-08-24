@@ -22,6 +22,8 @@ constexpr float InitialClientWidthDip = 960.0f;
 constexpr float InitialClientHeightDip = 620.0f;
 constexpr float MinimumClientWidthDip = 840.0f;
 constexpr float MinimumClientHeightDip = 560.0f;
+constexpr float MenuBarHeightDip = 32.0f;
+constexpr float DefaultRadiusDip = 8.0f;
 enum Id {
     Dark = 100,
     Light,
@@ -34,12 +36,22 @@ enum Id {
     Combo,
     Numeric,
 };
+enum : int {
+    MenuOpen = 3001,
+    MenuExit,
+    MenuUndo,
+    MenuUnavailable,
+    MenuDark,
+    MenuLight,
+    MenuResetRadius,
+    MenuAbout,
+};
 
 struct Gallery {
-    HWND window{}, dark{}, light{}, accent{}, disabled{}, iconButton{}, menuButton{}, label{},
+    HWND window{}, menuBar{}, dark{}, light{}, accent{}, disabled{}, iconButton{}, menuButton{}, label{},
         informationIcon{}, warningIcon{}, errorIcon{}, separator{}, panel{}, text{}, numeric{},
         checkbox{}, toggle{}, slider{}, radius{}, progress{}, activity{}, combo{}, scroll{}, status{};
-    float radiusDip{8};
+    float radiusDip{DefaultRadiusDip};
     bool lightTheme{};
     std::vector<HWND> rounded;
     std::vector<std::pair<HWND, wcw::RectDip>> nested;
@@ -83,6 +95,31 @@ void SetStatus(Gallery& gallery, const std::wstring& text) {
     SetWindowTextW(gallery.status, text.c_str());
 }
 
+std::vector<wcw::MenuItem> ApplicationMenu(bool lightTheme) {
+    return {
+        {.text = L"&File", .children = {
+            {.id = MenuOpen, .text = L"&Open", .shortcut = L"Ctrl+O",
+             .image = wcw::BuiltinIcon::Information},
+            {.separator = true},
+            {.id = MenuExit, .text = L"E&xit"},
+        }},
+        {.text = L"&Edit", .children = {
+            {.id = MenuUndo, .text = L"&Undo", .shortcut = L"Ctrl+Z"},
+            {.id = MenuUnavailable, .text = L"Unavailable", .enabled = false},
+        }},
+        {.text = L"&View", .children = {
+            {.id = MenuDark, .text = L"&Dark theme", .checked = !lightTheme},
+            {.id = MenuLight, .text = L"&Light theme", .checked = lightTheme},
+            {.text = L"More", .children = {
+                {.id = MenuResetRadius, .text = L"Reset corner radius"},
+            }},
+        }},
+        {.text = L"&Help", .children = {
+            {.id = MenuAbout, .text = L"&About"},
+        }},
+    };
+}
+
 std::vector<wcw::MenuItem> GalleryMenu() {
     return {
         {.id = 2001, .text = L"Information", .shortcut = L"Ctrl+I",
@@ -123,26 +160,28 @@ void Layout(Gallery& g) {
     const bool wide = width >= 820;
     const float column = wide ? (width - margin * 2 - 24) / 2 : width - margin * 2;
     const float right = wide ? margin + column + 24 : margin;
+    const float contentOffset = MenuBarHeightDip;
 
-    MoveWindowDip(g.label, margin, 16, column, 28);
-    MoveWindowDip(g.dark, margin, 52, 100, 36);
-    MoveWindowDip(g.light, margin + 110, 52, 100, 36);
-    MoveWindowDip(g.radius, margin + 220, 52, (std::max)(80.0f, column - 220), 36);
-    MoveWindowDip(g.accent, margin, 100, 150, 36);
-    MoveWindowDip(g.disabled, margin + 160, 100, 150, 36);
-    MoveWindowDip(g.iconButton, margin + 320, 100, 52, 36);
-    MoveWindowDip(g.separator, margin, 148, column, 1);
-    MoveWindowDip(g.text, margin, 162, column, 38);
-    MoveWindowDip(g.numeric, margin, 210, column, 38);
-    MoveWindowDip(g.checkbox, margin, 258, column * .48f, 36);
-    MoveWindowDip(g.toggle, margin + column * .52f, 258, column * .48f, 36);
-    MoveWindowDip(g.slider, margin, 304, column, 36);
-    MoveWindowDip(g.progress, margin, 350, column, 18);
-    MoveWindowDip(g.activity, margin, 380, column, 18);
-    MoveWindowDip(g.combo, margin, 410, column, 38);
+    MoveWindowDip(g.menuBar, 0, 0, width, MenuBarHeightDip);
+    MoveWindowDip(g.label, margin, 16 + contentOffset, column, 28);
+    MoveWindowDip(g.dark, margin, 52 + contentOffset, 100, 36);
+    MoveWindowDip(g.light, margin + 110, 52 + contentOffset, 100, 36);
+    MoveWindowDip(g.radius, margin + 220, 52 + contentOffset, (std::max)(80.0f, column - 220), 36);
+    MoveWindowDip(g.accent, margin, 100 + contentOffset, 150, 36);
+    MoveWindowDip(g.disabled, margin + 160, 100 + contentOffset, 150, 36);
+    MoveWindowDip(g.iconButton, margin + 320, 100 + contentOffset, 52, 36);
+    MoveWindowDip(g.separator, margin, 148 + contentOffset, column, 1);
+    MoveWindowDip(g.text, margin, 162 + contentOffset, column, 38);
+    MoveWindowDip(g.numeric, margin, 210 + contentOffset, column, 38);
+    MoveWindowDip(g.checkbox, margin, 258 + contentOffset, column * .48f, 36);
+    MoveWindowDip(g.toggle, margin + column * .52f, 258 + contentOffset, column * .48f, 36);
+    MoveWindowDip(g.slider, margin, 304 + contentOffset, column, 36);
+    MoveWindowDip(g.progress, margin, 350 + contentOffset, column, 18);
+    MoveWindowDip(g.activity, margin, 380 + contentOffset, column, 18);
+    MoveWindowDip(g.combo, margin, 410 + contentOffset, column, 38);
 
-    const float headerTop = wide ? 16 : 462;
-    const float scrollTop = wide ? 58 : 510;
+    const float headerTop = (wide ? 16 : 462) + contentOffset;
+    const float scrollTop = (wide ? 58 : 510) + contentOffset;
     MoveWindowDip(g.panel, right, headerTop, column - 224, 28);
     MoveWindowDip(g.informationIcon, right + column - 214, headerTop + 2, 24, 24);
     MoveWindowDip(g.warningIcon, right + column - 184, headerTop + 2, 24, 24);
@@ -156,6 +195,11 @@ void Layout(Gallery& g) {
 }
 
 bool CreateGallery(Gallery& g) {
+    wcw::MenuBarOptions menuBar{Base(g.window, 0, L"", L"Application menu")};
+    menuBar.bounds = {0, 0, InitialClientWidthDip, MenuBarHeightDip};
+    menuBar.items = ApplicationMenu(g.lightTheme);
+    g.menuBar = wcw::CreateMenuBar(menuBar);
+
     wcw::ButtonOptions button{Base(g.window, Dark, L"Dark")};
     g.dark = wcw::CreateButton(button);
     static_cast<wcw::ControlOptions&>(button) = Base(g.window, Light, L"Light");
@@ -272,7 +316,7 @@ bool CreateGallery(Gallery& g) {
 
     g.rounded = {g.dark, g.light, g.text, g.numeric, g.checkbox, g.toggle, g.combo};
     return std::ranges::all_of(g.rounded, [](HWND window) { return window != nullptr; }) &&
-           g.accent && g.disabled && g.iconButton && g.menuButton && g.label &&
+           g.menuBar && g.accent && g.disabled && g.iconButton && g.menuButton && g.label &&
            g.informationIcon && g.warningIcon && g.errorIcon && g.separator && g.panel && g.slider &&
            g.radius && g.progress && g.activity && g.scroll && g.status &&
            std::ranges::all_of(g.nested, [](const auto& item) { return item.first != nullptr; }) &&
@@ -322,6 +366,42 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     }
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case MenuOpen:
+            if (gallery) SetStatus(*gallery, L"Open selected");
+            return 0;
+        case MenuExit:
+            PostMessageW(window, WM_CLOSE, 0, 0);
+            return 0;
+        case MenuUndo:
+            if (gallery) SetStatus(*gallery, L"Undo selected");
+            return 0;
+        case MenuUnavailable:
+            if (gallery) SetStatus(*gallery, L"Unavailable selected");
+            return 0;
+        case MenuDark:
+            if (gallery) {
+                gallery->lightTheme = false;
+                wcw::SetMenuBarItems(gallery->menuBar, ApplicationMenu(gallery->lightTheme));
+                ApplyAppearance(*gallery);
+            }
+            return 0;
+        case MenuLight:
+            if (gallery) {
+                gallery->lightTheme = true;
+                wcw::SetMenuBarItems(gallery->menuBar, ApplicationMenu(gallery->lightTheme));
+                ApplyAppearance(*gallery);
+            }
+            return 0;
+        case MenuResetRadius:
+            if (gallery) {
+                gallery->radiusDip = DefaultRadiusDip;
+                wcw::SetSliderValue(gallery->radius, gallery->radiusDip);
+                ApplyAppearance(*gallery);
+            }
+            return 0;
+        case MenuAbout:
+            if (gallery) SetStatus(*gallery, L"About selected");
+            return 0;
         case 2001: SetStatus(*gallery, L"Information selected"); return 0;
         case 2002: SetStatus(*gallery, L"Warning selected"); return 0;
         case 2003: SetStatus(*gallery, L"Report error selected"); return 0;
@@ -334,6 +414,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 SetStatus(*gallery, std::format(L"Button {} clicked", LOWORD(wParam)));
                 return 0;
             }
+            wcw::SetMenuBarItems(gallery->menuBar, ApplicationMenu(gallery->lightTheme));
             ApplyAppearance(*gallery);
         }
         return 0;
