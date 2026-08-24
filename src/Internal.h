@@ -67,8 +67,15 @@ bool RegisterScrollViewClasses();
 bool RegisterTooltipClass();
 bool RegisterMenuClass();
 bool RegisterMenuBarClass();
+struct PopupMenuResult {
+    bool shown{};
+    int nextTopIndex{-1};
+};
 bool ShowPopupMenu(HWND commandTarget, HWND source, RECT anchor,
                    std::vector<MenuItem> items, const StyleOverride& appearance);
+PopupMenuResult ShowMenuBarPopup(HWND commandTarget, HWND source, RECT anchor,
+                                 std::vector<MenuItem> items,
+                                 const StyleOverride& appearance, HWND menuBar, int topIndex);
 void CancelPopupMenu(HWND source);
 
 inline constexpr UINT TextBoxSetTextMessage = WM_APP + 0x571;
@@ -99,6 +106,7 @@ inline constexpr UINT ButtonSetMenuItemsMessage = WM_APP + 0x589;
 inline constexpr UINT ButtonGetMenuStateMessage = WM_APP + 0x58A;
 inline constexpr UINT MenuBarSetItemsMessage = WM_APP + 0x58B;
 inline constexpr UINT MenuBarHitTestMessage = WM_APP + 0x58C;
+inline constexpr UINT MenuBarNextItemMessage = WM_APP + 0x58D;
 
 HWND CreateNumericBoxWindow(const NumericBoxOptions& options);
 bool IsTextBoxWindow(HWND window, bool numericOnly = false);

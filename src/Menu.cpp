@@ -131,14 +131,17 @@ std::vector<internal::AccessibleMenuItem> AccessibleItems(const PopupLevel& leve
 class PopupController {
 public:
     PopupController(HWND commandTarget, HWND source, RECT anchor,
-                    std::vector<MenuItem> items, StyleOverride appearance)
+                    std::vector<MenuItem> items, StyleOverride appearance,
+                    HWND menuBar = nullptr, int topIndex = -1)
         : commandTarget_(commandTarget), source_(source), rootAnchor_(anchor),
-          items_(std::move(items)), appearance_(std::move(appearance)) {}
+          items_(std::move(items)), appearance_(std::move(appearance)), menuBar_(menuBar),
+          topIndex_(topIndex) {}
 
     bool Run();
     int Command() const { return command_; }
     HWND CommandTarget() const { return commandTarget_; }
     HWND Source() const { return source_; }
+    int NextTopIndex() const { return nextTopIndex_; }
     void Select(size_t level, int row);
     void OpenChild(size_t level, int row, bool immediate);
     void CloseFrom(size_t level);
@@ -153,7 +156,7 @@ private:
     void MouseMove(HWND window, LPARAM lParam);
     void MouseUp(HWND window, LPARAM lParam);
     void DismissOutside(HWND window, LPARAM lParam);
-    void PointerUp(LPARAM lParam);
+    void PointerUp(POINT point);
     void MouseWheel(HWND window, WPARAM wParam, LPARAM lParam);
     void KeyDown(WPARAM key);
     void EnsureVisible(size_t level, int row);
@@ -163,6 +166,9 @@ private:
     int UpdateAccessibility(size_t level);
     void UpdateRegion(HWND window);
     void Paint(HWND window);
+    bool InsideHost(POINT screen) const;
+    int HostItem(POINT screen) const;
+    bool SwitchFromHost(POINT screen, bool release);
 
     friend LRESULT PopupProcImpl(HWND, UINT, WPARAM, LPARAM);
     friend LRESULT CALLBACK OwnerProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
@@ -174,6 +180,9 @@ private:
     std::vector<MenuItem> items_;
     StyleOverride appearance_;
     std::vector<std::unique_ptr<PopupLevel>> levels_;
+    HWND menuBar_{};
+    int topIndex_{-1};
+    int nextTopIndex_{-1};
     int command_{};
     bool done_{};
     bool shown_{};
@@ -388,7 +397,37 @@ bool PopupController::InsideChain(POINT screen) const {
         if (level->window && internal::WindowRegionContainsScreenPoint(level->window, screen))
             return true;
     }
-    return false;
+    return InsideHost(screen);
+}
+
+bool PopupController::InsideHost(POINT screen) const {
+    if (levels_.size() != 1 || !menuBar_ || !IsWindow(menuBar_)) return false;
+    RECT bounds{};
+    return GetWindowRect(menuBar_, &bounds) && Contains(bounds, screen);
+}
+
+int PopupController::HostItem(POINT screen) const {
+    if (!InsideHost(screen)) return -1;
+    auto point = screen;
+    const auto result = SendMessageW(menuBar_, internal::MenuBarNextItemMessage, 0,
+                                     reinterpret_cast<LPARAM>(&point));
+    return static_cast<int>(result);
+}
+
+bool PopupController::SwitchFromHost(POINT screen, bool release) {
+    if (!InsideHost(screen)) return false;
+    const auto index = HostItem(screen);
+    if (index < 0) return true;
+    if (index == topIndex_) {
+        if (release) {
+            nextTopIndex_ = -1;
+            Cancel();
+        }
+        return true;
+    }
+    nextTopIndex_ = index;
+    Cancel();
+    return true;
 }
 
 size_t PopupController::LevelIndex(HWND window) const {
@@ -400,6 +439,7 @@ size_t PopupController::LevelIndex(HWND window) const {
 void PopupController::MouseMove(HWND window, LPARAM lParam) {
     POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     ClientToScreen(window, &point);
+    if (SwitchFromHost(point, false)) return;
     const auto [level, row] = HitTest(point);
     if (level == static_cast<size_t>(-1) || row < 0) {
         StopChildTimer();
@@ -418,7 +458,7 @@ void PopupController::MouseMove(HWND window, LPARAM lParam) {
 void PopupController::MouseUp(HWND window, LPARAM lParam) {
     POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
     ClientToScreen(window, &point);
-    PointerUp(MAKELPARAM(point.x, point.y));
+    PointerUp(point);
 }
 
 void PopupController::DismissOutside(HWND window, LPARAM lParam) {
@@ -427,8 +467,8 @@ void PopupController::DismissOutside(HWND window, LPARAM lParam) {
     if (!InsideChain(point)) Cancel();
 }
 
-void PopupController::PointerUp(LPARAM lParam) {
-    const POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+void PopupController::PointerUp(POINT point) {
+    if (SwitchFromHost(point, true)) return;
     const auto [level, row] = HitTest(point);
     if (level != static_cast<size_t>(-1) && row >= 0) Activate(level, row);
     else if (!InsideChain(point)) Cancel();
@@ -473,6 +513,14 @@ void PopupController::KeyDown(WPARAM key) {
         Select(level, internal::EdgeMenuIndex(*current.items, key == VK_END));
         break;
     case VK_RIGHT:
+        if (!level && menuBar_ && IsWindow(menuBar_)) {
+            const auto next = SendMessageW(menuBar_, internal::MenuBarNextItemMessage, 1, 0);
+            if (next >= 0 && next != topIndex_) {
+                nextTopIndex_ = static_cast<int>(next);
+                Cancel();
+            }
+            break;
+        }
         if (current.selected >= 0) OpenChild(level, current.selected, true);
         break;
     case VK_LEFT:
@@ -482,6 +530,12 @@ void PopupController::KeyDown(WPARAM key) {
             if (focusedChild)
                 internal::NotifyAccessibility(levels_[level - 1]->window,
                                                 EVENT_OBJECT_FOCUS, focusedChild);
+        } else if (menuBar_ && IsWindow(menuBar_)) {
+            const auto previous = SendMessageW(menuBar_, internal::MenuBarNextItemMessage, -1, 0);
+            if (previous >= 0 && previous != topIndex_) {
+                nextTopIndex_ = static_cast<int>(previous);
+                Cancel();
+            }
         }
         break;
     case VK_RETURN:
@@ -489,6 +543,7 @@ void PopupController::KeyDown(WPARAM key) {
         if (current.selected >= 0) Activate(level, current.selected);
         break;
     case VK_ESCAPE:
+    case VK_MENU:
         Cancel();
         break;
     }
@@ -694,12 +749,17 @@ LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
         if (controller) controller->DismissOutside(window, lParam);
         return 0;
     case WM_POINTERUP:
-        if (controller) controller->PointerUp(lParam);
+        if (controller) {
+            POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ClientToScreen(window, &point);
+            controller->PointerUp(point);
+        }
         return 0;
     case WM_MOUSEWHEEL:
         if (controller) controller->MouseWheel(window, wParam, lParam);
         return 0;
     case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
         if (controller) controller->KeyDown(wParam);
         return 0;
     case internal::MenuActivateAccessibleMessage:
@@ -803,15 +863,28 @@ bool RegisterMenuClass() {
     return RegisterControlClass(PopupClass, SafeWindowProc<PopupProcImpl>, style);
 }
 
-bool ShowPopupMenu(HWND commandTarget, HWND source, RECT anchor,
-                   std::vector<MenuItem> items, const StyleOverride& appearance) {
-    PopupController controller(commandTarget, source, anchor, std::move(items), appearance);
+static PopupMenuResult RunPopup(HWND commandTarget, HWND source, RECT anchor,
+                                std::vector<MenuItem> items, const StyleOverride& appearance,
+                                HWND menuBar, int topIndex) {
+    PopupController controller(commandTarget, source, anchor, std::move(items), appearance,
+                               menuBar, topIndex);
     const bool shown = controller.Run();
     const auto target = controller.CommandTarget();
     if (shown && controller.Command() && target && IsWindow(target))
         SendMessageW(target, WM_COMMAND, MAKEWPARAM(controller.Command(), 0),
                      reinterpret_cast<LPARAM>(source));
-    return shown;
+    return {shown, controller.NextTopIndex()};
+}
+
+bool ShowPopupMenu(HWND commandTarget, HWND source, RECT anchor,
+                   std::vector<MenuItem> items, const StyleOverride& appearance) {
+    return RunPopup(commandTarget, source, anchor, std::move(items), appearance, nullptr, -1).shown;
+}
+
+PopupMenuResult ShowMenuBarPopup(HWND commandTarget, HWND source, RECT anchor,
+                                 std::vector<MenuItem> items, const StyleOverride& appearance,
+                                 HWND menuBar, int topIndex) {
+    return RunPopup(commandTarget, source, anchor, std::move(items), appearance, menuBar, topIndex);
 }
 
 void CancelPopupMenu(HWND source) {

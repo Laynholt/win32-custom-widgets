@@ -7,6 +7,8 @@
 #include "Paint.h"
 
 #include <algorithm>
+#include <commctrl.h>
+#include <cwctype>
 #include <memory>
 #include <windowsx.h>
 
@@ -14,6 +16,14 @@ namespace wcw {
 namespace {
 
 constexpr wchar_t MenuBarClass[] = L"WcwMenuBar";
+
+struct MenuBarState;
+LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                                   UINT_PTR id, DWORD_PTR reference);
+MenuBarState* State(HWND window);
+void CancelMenuMode(HWND bar);
+bool BeginMenuMode(HWND bar, int index = -1);
+void RunMenuMode(HWND bar, int index);
 
 struct MenuBarState {
     std::vector<MenuItem> items;
@@ -23,7 +33,14 @@ struct MenuBarState {
     int active{-1};
     bool pressed{};
     bool popupOpen{};
+    bool menuMode{};
+    bool altDown{};
+    HWND savedFocus{};
 };
+
+MenuBarState* State(HWND window) {
+    return reinterpret_cast<MenuBarState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+}
 
 int TextWidth(HDC dc, HFONT font, const std::wstring& text) {
     if (text.empty()) return 0;
@@ -75,24 +92,81 @@ void CancelPress(HWND window, MenuBarState& state) {
     if (changed) InvalidateRect(window, nullptr, FALSE);
 }
 
-void Activate(HWND bar, MenuBarState& state, int index) {
-    if (index < 0 || index >= static_cast<int>(state.items.size())) return;
-    const auto& item = state.items[index];
-    if (!item.enabled) return;
-    if (item.children.empty()) {
-        SendMessageW(GetParent(bar), WM_COMMAND, MAKEWPARAM(item.id, 0),
-                     reinterpret_cast<LPARAM>(bar));
-        return;
+void CancelMenuMode(HWND bar) {
+    internal::CancelPopupMenu(bar);
+    auto* state = IsWindow(bar) ? State(bar) : nullptr;
+    if (!state) return;
+    const auto savedFocus = state->savedFocus;
+    const bool changed = state->menuMode || state->popupOpen || state->active >= 0;
+    state->savedFocus = nullptr;
+    state->menuMode = false;
+    state->altDown = false;
+    state->popupOpen = false;
+    state->active = -1;
+    SendMessageW(bar, WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEACCEL), 0);
+    if (IsWindow(savedFocus)) SetFocus(savedFocus);
+    if (changed) InvalidateRect(bar, nullptr, FALSE);
+}
+
+bool BeginMenuMode(HWND bar, int index) {
+    auto* state = IsWindow(bar) ? State(bar) : nullptr;
+    if (!state || !IsWindowEnabled(bar)) return false;
+    if (index < 0) index = internal::NextMenuIndex(state->items, -1, 1);
+    if (index < 0 || index >= static_cast<int>(state->items.size()) ||
+        !state->items[index].enabled)
+        return false;
+    if (!state->menuMode) {
+        state->savedFocus = GetFocus();
+        state->menuMode = true;
+        SendMessageW(bar, WM_CHANGEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEACCEL), 0);
     }
-    RECT anchor = state.itemBounds[index];
-    MapWindowPoints(bar, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
-    state.popupOpen = true;
-    state.active = index;
+    state->active = index;
+    SetFocus(bar);
     InvalidateRect(bar, nullptr, FALSE);
-    internal::ShowPopupMenu(GetParent(bar), bar, anchor, item.children, state.menuAppearance);
-    if (!IsWindow(bar)) return;
-    state.popupOpen = false;
-    InvalidateRect(bar, nullptr, FALSE);
+    return true;
+}
+
+void RunMenuMode(HWND bar, int index) {
+    int next = index;
+    while (next >= 0 && IsWindow(bar)) {
+        auto* state = State(bar);
+        if (!state || next >= static_cast<int>(state->items.size())) break;
+        const auto& item = state->items[next];
+        if (!item.enabled) break;
+        state->active = next;
+        if (item.children.empty()) {
+            const auto parent = GetParent(bar);
+            const auto id = item.id;
+            SendMessageW(parent, WM_COMMAND, MAKEWPARAM(id, 0), reinterpret_cast<LPARAM>(bar));
+            if (!IsWindow(bar)) return;
+            CancelMenuMode(bar);
+            return;
+        }
+
+        RECT anchor = state->itemBounds[next];
+        MapWindowPoints(bar, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
+        auto children = item.children;
+        const auto appearance = state->menuAppearance;
+        const auto parent = GetParent(bar);
+        state->popupOpen = true;
+        InvalidateRect(bar, nullptr, FALSE);
+        const auto result = internal::ShowMenuBarPopup(
+            parent ? parent : nullptr, bar, anchor, std::move(children), appearance, bar, next);
+        if (!IsWindow(bar)) return;
+        state = State(bar);
+        if (!state) return;
+        state->popupOpen = false;
+        next = result.nextTopIndex;
+    }
+    if (IsWindow(bar)) CancelMenuMode(bar);
+}
+
+void Activate(HWND bar, MenuBarState& state, int index) {
+    if (index < 0 || index >= static_cast<int>(state.items.size()) ||
+        !state.items[index].enabled)
+        return;
+    if (!BeginMenuMode(bar, index)) return;
+    RunMenuMode(bar, index);
 }
 
 void Paint(HWND window, const MenuBarState& state) {
@@ -136,8 +210,83 @@ void Paint(HWND window, const MenuBarState& state) {
     EndPaint(window, &ps);
 }
 
+bool HandleMnemonic(HWND bar, wchar_t character) {
+    auto* state = IsWindow(bar) ? State(bar) : nullptr;
+    if (!state) return false;
+    character = std::towlower(character);
+    for (int index = 0; index < static_cast<int>(state->items.size()); ++index) {
+        const auto& item = state->items[index];
+        if (item.enabled && internal::ParseMenuLabel(item.text).mnemonic == character) {
+            if (!BeginMenuMode(bar, index)) return false;
+            RunMenuMode(bar, index);
+            return true;
+        }
+    }
+    return false;
+}
+
+LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                                   UINT_PTR id, DWORD_PTR reference) {
+    const auto bar = reinterpret_cast<HWND>(reference);
+    if (!bar || !IsWindow(bar)) {
+        RemoveWindowSubclass(window, MenuBarParentProc, id);
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
+    auto* state = State(bar);
+    if (!state) return DefSubclassProc(window, message, wParam, lParam);
+    switch (message) {
+    case WM_KEYDOWN:
+        if (wParam == VK_F10) {
+            BeginMenuMode(bar);
+            return 0;
+        }
+        break;
+    case WM_SYSKEYDOWN:
+        if (wParam == VK_MENU) {
+            state->altDown = true;
+            return 0;
+        }
+        break;
+    case WM_SYSKEYUP:
+        if (wParam == VK_MENU) {
+            const bool toggle = state->altDown;
+            state->altDown = false;
+            if (toggle) {
+                if (state->menuMode) CancelMenuMode(bar);
+                else BeginMenuMode(bar);
+            }
+            return 0;
+        }
+        break;
+    case WM_SYSCHAR:
+        if (HandleMnemonic(bar, static_cast<wchar_t>(wParam))) return 0;
+        break;
+    case WM_ACTIVATEAPP:
+        if (!wParam) {
+            if (state->popupOpen) internal::CancelPopupMenu(bar);
+            else CancelMenuMode(bar);
+        }
+        break;
+    case WM_ACTIVATE:
+        if (LOWORD(wParam) == WA_INACTIVE && (!state->popupOpen || !lParam))
+            CancelMenuMode(bar);
+        break;
+    case WM_CANCELMODE:
+        if (state->popupOpen) internal::CancelPopupMenu(bar);
+        else CancelMenuMode(bar);
+        break;
+    case WM_NCDESTROY:
+        CancelMenuMode(bar);
+        RemoveWindowSubclass(window, MenuBarParentProc, id);
+        break;
+    default:
+        break;
+    }
+    return DefSubclassProc(window, message, wParam, lParam);
+}
+
 LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    auto* state = reinterpret_cast<MenuBarState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+    auto* state = State(window);
     if (message == WM_NCCREATE) {
         const auto* options = static_cast<const MenuBarState*>(
             reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
@@ -147,7 +296,7 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
     }
     if (message == WM_NCDESTROY && state) {
-        internal::CancelPopupMenu(window);
+        CancelMenuMode(window);
         CancelPress(window, *state);
     }
     if (state && (message == WM_SIZE || message == WM_DPICHANGED ||
@@ -158,8 +307,54 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
+        if (const auto parent = GetParent(window); parent && IsWindow(parent))
+            RemoveWindowSubclass(parent, MenuBarParentProc,
+                                 reinterpret_cast<UINT_PTR>(window));
         delete state;
         SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        return DefWindowProcW(window, message, wParam, lParam);
+    case WM_GETDLGCODE:
+        return DLGC_WANTARROWS | DLGC_WANTCHARS;
+    case WM_KEYDOWN:
+        if (!state) return 0;
+        if (wParam == VK_F10) {
+            BeginMenuMode(window);
+            return 0;
+        }
+        if (!state->menuMode) return DefWindowProcW(window, message, wParam, lParam);
+        if (wParam == VK_LEFT || wParam == VK_RIGHT) {
+            const auto next = internal::NextMenuIndex(
+                state->items, state->active, wParam == VK_LEFT ? -1 : 1);
+            if (next >= 0 && next != state->active) {
+                state->active = next;
+                InvalidateRect(window, nullptr, FALSE);
+            }
+        } else if (wParam == VK_DOWN || wParam == VK_RETURN || wParam == VK_SPACE) {
+            const auto active = state->active;
+            if (active >= 0) Activate(window, *state, active);
+        } else if (wParam == VK_ESCAPE) {
+            CancelMenuMode(window);
+        }
+        return 0;
+    case WM_SYSKEYDOWN:
+        if (state && wParam == VK_MENU) {
+            state->altDown = true;
+            return 0;
+        }
+        return DefWindowProcW(window, message, wParam, lParam);
+    case WM_SYSKEYUP:
+        if (state && wParam == VK_MENU) {
+            const bool toggle = state->altDown;
+            state->altDown = false;
+            if (toggle) {
+                if (state->menuMode) CancelMenuMode(window);
+                else BeginMenuMode(window);
+            }
+            return 0;
+        }
+        return DefWindowProcW(window, message, wParam, lParam);
+    case WM_SYSCHAR:
+        if (HandleMnemonic(window, static_cast<wchar_t>(wParam))) return 0;
         return DefWindowProcW(window, message, wParam, lParam);
     case WM_MOUSEMOVE: {
         if (!state) return 0;
@@ -179,8 +374,10 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     case WM_LBUTTONDOWN:
-        if (state && IsWindowEnabled(window) &&
-            HitTest(*state, {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}) >= 0) {
+        if (state && IsWindowEnabled(window)) {
+            const auto index = HitTest(*state, {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)});
+            if (index < 0) return 0;
+            BeginMenuMode(window, index);
             SetFocus(window);
             SetCapture(window);
             state->pressed = true;
@@ -203,7 +400,8 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     case WM_CANCELMODE:
         if (state) {
             CancelPress(window, *state);
-            internal::CancelPopupMenu(window);
+            if (state->popupOpen) internal::CancelPopupMenu(window);
+            else CancelMenuMode(window);
             InvalidateRect(window, nullptr, FALSE);
         }
         return 0;
@@ -211,15 +409,20 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         if (state && !wParam) {
             CancelPress(window, *state);
             state->hot = -1;
-            internal::CancelPopupMenu(window);
+            if (state->popupOpen) internal::CancelPopupMenu(window);
+            else CancelMenuMode(window);
         }
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     case WM_SHOWWINDOW:
-        if (state && !wParam) internal::CancelPopupMenu(window);
+        if (state && !wParam) {
+            if (state->popupOpen) internal::CancelPopupMenu(window);
+            else CancelMenuMode(window);
+        }
         return DefWindowProcW(window, message, wParam, lParam);
     case internal::MenuBarSetItemsMessage:
         if (!state || !lParam) return FALSE;
+        if (state->menuMode && !state->popupOpen) CancelMenuMode(window);
         state->items = *reinterpret_cast<const std::vector<MenuItem>*>(lParam);
         state->hot = -1;
         state->active = -1;
@@ -230,6 +433,21 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         return state && lParam
                    ? HitTest(*state, *reinterpret_cast<const POINT*>(lParam))
                    : -1;
+    case internal::MenuBarNextItemMessage:
+        {
+            if (!state) return -1;
+            if (lParam) {
+                auto point = *reinterpret_cast<const POINT*>(lParam);
+                ScreenToClient(window, &point);
+                const auto index = HitTest(*state, point);
+                return index >= 0 && index < static_cast<int>(state->items.size()) &&
+                               state->items[index].enabled
+                           ? index
+                           : -1;
+            }
+            const int direction = wParam == static_cast<WPARAM>(-1) ? -1 : 1;
+            return internal::NextMenuIndex(state->items, state->active, direction);
+        }
     case WM_PAINT:
         if (state) Paint(window, *state);
         return 0;
@@ -247,11 +465,20 @@ HWND Create(const MenuBarOptions& options) {
     MenuBarState state;
     state.items = options.items;
     state.menuAppearance = options.menuAppearance;
-    return CreateWindowExW(
+    const auto window = CreateWindowExW(
         0, MenuBarClass, L"", WS_CHILD | WS_TABSTOP | options.style,
         DipToPx(options.bounds.x, dpi), DipToPx(options.bounds.y, dpi),
         DipToPx(options.bounds.width, dpi), DipToPx(options.bounds.height, dpi), options.parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(options.id)), internal::Instance(), &state);
+    if (window && !SetWindowSubclass(options.parent, MenuBarParentProc,
+                                     reinterpret_cast<UINT_PTR>(window),
+                                     reinterpret_cast<DWORD_PTR>(window))) {
+        const auto error = GetLastError();
+        DestroyWindow(window);
+        SetLastError(error);
+        return nullptr;
+    }
+    return window;
 }
 
 } // namespace

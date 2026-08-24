@@ -366,6 +366,21 @@ void CALLBACK ReplaceMenu(HWND owner, UINT, UINT_PTR timer, DWORD) {
     CHECK(wcw::SetMenuItems(menuButton, replacementMenu));
 }
 
+void CALLBACK RootRightOpensChild(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (!popup) return;
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(popup, WM_KEYDOWN, VK_RIGHT, 0);
+    CHECK(PopupCount() == 2);
+    popup = GetCapture();
+    CHECK(popup != nullptr);
+    if (popup) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+    popup = Popup();
+    if (popup) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
 void CALLBACK InspectAccessibility(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     const auto popup = Popup();
@@ -653,6 +668,15 @@ int main() {
     CHECK(!popupAliveWhenCommand);
     CHECK(buttonIdCommands == 0);
     CHECK(SendMessageW(menuButton, wcw::internal::ButtonGetMenuStateMessage, 0, 0) == 1);
+
+    const std::vector<wcw::MenuItem> nestedButtonMenu{
+        {.text = L"More", .children = {{.id = 305, .text = L"Nested"}}},
+    };
+    CHECK(wcw::SetMenuItems(menuButton, nestedButtonMenu));
+    SetTimer(parent, 23, 1, RootRightOpensChild);
+    SendMessageW(menuButton, BM_CLICK, 0, 0);
+    CHECK(Popup() == nullptr);
+    CHECK(wcw::SetMenuItems(menuButton, menuButtonOptions.items));
 
     ResetCommand();
     SetTimer(parent, 19, 1, ReplaceMenu);

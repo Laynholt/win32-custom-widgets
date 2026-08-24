@@ -14,6 +14,18 @@ namespace {
 int commandId{};
 LPARAM commandSource{};
 HWND menuBar{};
+HWND originalFocus{};
+
+int PopupCount() {
+    int count{};
+    EnumThreadWindows(GetCurrentThreadId(), [](HWND window, LPARAM value) {
+        wchar_t name[64]{};
+        GetClassNameW(window, name, static_cast<int>(std::size(name)));
+        if (wcscmp(name, L"WcwMenuPopup") == 0) ++*reinterpret_cast<int*>(value);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&count));
+    return count;
+}
 
 HWND Popup() {
     return FindWindowW(L"WcwMenuPopup", nullptr);
@@ -54,6 +66,95 @@ void CALLBACK DestroyDialog(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     CHECK(Popup() != nullptr);
     DestroyWindow(owner);
+}
+
+RECT BarItemScreenRect(int target) {
+    RECT result{};
+    int left = -1;
+    int right = -1;
+    for (int x = 0; x < 320; ++x) {
+        POINT point{x, 16};
+        if (SendMessageW(menuBar, wcw::internal::MenuBarHitTestMessage, 0,
+                         reinterpret_cast<LPARAM>(&point)) == target) {
+            if (left < 0) left = x;
+            right = x + 1;
+        }
+    }
+    if (left < 0) return result;
+    result = {left, 0, right, 32};
+    MapWindowPoints(menuBar, nullptr, reinterpret_cast<POINT*>(&result), 2);
+    return result;
+}
+
+void CALLBACK CheckViewPopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    const auto view = BarItemScreenRect(2);
+    RECT popupBounds{};
+    CHECK(GetWindowRect(popup, &popupBounds));
+    CHECK(popupBounds.top == view.bottom || popupBounds.bottom == view.top);
+    if (popup) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
+void CALLBACK SwitchPopupRight(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (!popup) return;
+    SendMessageW(popup, WM_KEYDOWN, VK_RIGHT, 0);
+    SetTimer(owner, timer + 100, 1, CheckViewPopup);
+}
+
+void CALLBACK HoverSwitchPopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (!popup) return;
+    auto view = BarItemScreenRect(2);
+    POINT point{(view.left + view.right) / 2, (view.top + view.bottom) / 2};
+    ScreenToClient(popup, &point);
+    SendMessageW(popup, WM_MOUSEMOVE, 0, MAKELPARAM(point.x, point.y));
+    SetTimer(owner, timer + 100, 1, CheckViewPopup);
+}
+
+void CALLBACK ClickCurrentPopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (!popup) return;
+    auto file = BarItemScreenRect(0);
+    POINT point{(file.left + file.right) / 2, (file.top + file.bottom) / 2};
+    ScreenToClient(popup, &point);
+    SendMessageW(popup, WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
+}
+
+void CALLBACK CancelWithAlt(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (popup) SendMessageW(popup, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
+}
+
+void CALLBACK NestedLeftBeforeSwitch(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (!popup) return;
+    SendMessageW(popup, WM_KEYDOWN, VK_DOWN, 0);
+    SendMessageW(popup, WM_LBUTTONUP, 0, MAKELPARAM(10, 10));
+    CHECK(PopupCount() == 2);
+    popup = GetCapture();
+    CHECK(popup != nullptr);
+    if (!popup) return;
+    SendMessageW(popup, WM_KEYDOWN, VK_LEFT, 0);
+    CHECK(PopupCount() == 1);
+    popup = GetCapture();
+    CHECK(popup != nullptr);
+    if (popup) {
+        SendMessageW(popup, WM_KEYDOWN, VK_RIGHT, 0);
+        SetTimer(owner, timer + 100, 1, CheckViewPopup);
+    }
 }
 
 } // namespace
@@ -176,6 +277,60 @@ int main() {
     SendMessageW(menuBar, WM_LBUTTONUP, 0, MAKELPARAM(8, 16));
     CHECK(Popup() == nullptr);
     CHECK(commandId == 202);
+
+    const std::vector<MenuItem> navigationItems{
+        {.text = L"&File", .children = {{.text = L"More", .children = {{.id = 301, .text = L"Open"}}}}},
+        {.text = L"&Edit", .children = {{.id = 302, .text = L"Cut"}}, .enabled = false},
+        {.text = L"&View", .children = {{.id = 303, .text = L"Zoom"}}},
+    };
+    CHECK(wcw::SetMenuBarItems(menuBar, navigationItems));
+    originalFocus = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE,
+                                    0, 40, 100, 20, dialog, nullptr, instance, nullptr);
+    CHECK(originalFocus != nullptr);
+    ShowWindow(dialog, SW_SHOW);
+    CHECK(SetFocus(originalFocus) != nullptr || GetFocus() == originalFocus);
+
+    SetTimer(dialog, 201, 1, EscapePopup);
+    SendMessageW(dialog, WM_KEYDOWN, VK_F10, 0);
+    CHECK(GetFocus() == menuBar);
+    SendMessageW(menuBar, WM_KEYDOWN, VK_RIGHT, 0);
+    SendMessageW(menuBar, WM_KEYDOWN, VK_DOWN, 0);
+    CHECK(Popup() == nullptr);
+    CHECK(GetFocus() == originalFocus);
+
+    SetTimer(dialog, 202, 1, SwitchPopupRight);
+    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    CHECK(Popup() == nullptr);
+    CHECK(GetFocus() == originalFocus);
+
+    SetTimer(dialog, 203, 1, HoverSwitchPopup);
+    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    CHECK(Popup() == nullptr);
+    CHECK(GetFocus() == originalFocus);
+
+    SetTimer(dialog, 204, 1, ClickCurrentPopup);
+    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    CHECK(Popup() == nullptr);
+    CHECK(GetFocus() == originalFocus);
+
+    SetTimer(dialog, 205, 1, CancelWithAlt);
+    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    CHECK(Popup() == nullptr);
+    CHECK(GetFocus() == originalFocus);
+
+    SetTimer(dialog, 206, 1, NestedLeftBeforeSwitch);
+    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    CHECK(Popup() == nullptr);
+    CHECK(GetFocus() == originalFocus);
+
+    SendMessageW(dialog, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
+    SendMessageW(dialog, WM_SYSKEYUP, VK_MENU, 1L << 29);
+    CHECK(GetFocus() == menuBar);
+    SendMessageW(dialog, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
+    SendMessageW(dialog, WM_SYSKEYUP, VK_MENU, 1L << 29);
+    CHECK(GetFocus() == originalFocus);
+
+    CHECK(wcw::SetMenuBarItems(menuBar, firstItems));
 
     CHECK(!wcw::SetMenuBarItems(menuBar, {}));
     CHECK(wcw::SetMenuBarItems(menuBar, replacementItems));
