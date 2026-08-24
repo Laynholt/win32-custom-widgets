@@ -56,3 +56,59 @@ Result: all 13/13 CTest targets passed, including `MenuTests`, `MenuBarTests`, `
 ## Concerns
 
 No known blockers. `WM_ACTIVATE` with a nonzero activating-window handle while a menu-bar popup is open is intentionally left to the popup controller; `WM_ACTIVATEAPP(FALSE)` remains an unconditional cancellation path.
+
+## Reviewer fix round 1
+
+Implementation:
+
+- Routed F10, Alt state, and mnemonics from the focused child through per-menu-bar descendant subclasses, including descendants created after the bar; teardown removes each bar's subclass IDs on child, bar, and parent destruction.
+- Shared the Alt shortcut state machine so any intervening `WM_SYSKEYDOWN` clears `altDown` before Alt release.
+- Kept activation caused by the menu-bar popup distinct from same-process parent deactivation, cancelling the active controller for other activating windows.
+- Strengthened popup switching coverage with File/View horizontal anchor movement and `MenuBarNextItemMessage` active-index confirmation.
+
+Files:
+
+- `src/MenuBar.cpp`
+- `tests/test_menu_bar.cpp`
+- `.superpowers/sdd/2026-08-24-custom-menu-bar/task-3-report.md`
+
+Exact RED on `fa6c90b` after adding the focused-child/deactivation/switching assertions:
+
+```powershell
+rtk cmake --build build --config Debug --target MenuBarTests; rtk ctest --test-dir build -C Debug -R '^MenuBarTests$' --output-on-failure
+```
+
+Build succeeded, then `MenuBarTests` failed (`exit_code=1`): focused-child F10 at `tests/test_menu_bar.cpp:313`, Alt focus restoration at `:355` and `:361`, and dependent popup/lifetime assertions at `:154`, `:164`, `:377`, and `:384`.
+
+Exact focused GREEN:
+
+```powershell
+rtk cmake --build build --config Debug --target MenuBarTests; rtk ctest --test-dir build -C Debug -R '^MenuBarTests$' --output-on-failure
+```
+
+Result: build succeeded; `MenuBarTests` passed 1/1, 100%.
+
+Exact focused regression GREEN:
+
+```powershell
+rtk ctest --test-dir build -C Debug -R '^(MenuBarTests|MenuTests)$' --output-on-failure
+```
+
+Result: `MenuTests` and `MenuBarTests` passed 2/2, 100%.
+
+Exact full Debug verification:
+
+```powershell
+rtk cmake --build build --config Debug; rtk ctest --test-dir build -C Debug --output-on-failure
+```
+
+Result: all 13/13 CTest targets passed, 100%, including `MenuTests`, `MenuBarTests`, `AccessibilityTests`, and `ConsumerSmoke`; total test time 17.06 seconds.
+
+Self-review:
+
+- Popup rendering/controller ownership, normal `ShowPopupMenu` behavior, command dispatch, capture, accessibility, and `std::vector<MenuItem>` remain shared.
+- Keyboard observers use one subclass ID per bar, choose one enabled visible bar for shared-parent routing, observe both existing and newly-created descendants, and remove observers before bar state teardown.
+- Nested popup cancellation continues to refresh state only after `IsWindow(bar)` checks; focus restoration remains owned by the popup loop while it unwinds.
+- `rtk git diff --check` is clean.
+
+Concerns: none known. Popup activation is recognized by its owned parent plus `WS_POPUP | WS_EX_TOOLWINDOW`; other same-process `WM_ACTIVATE(WA_INACTIVE)` targets cancel the controller. `WM_ACTIVATEAPP(FALSE)` remains unconditional.

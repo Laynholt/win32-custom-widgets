@@ -20,6 +20,10 @@ constexpr wchar_t MenuBarClass[] = L"WcwMenuBar";
 struct MenuBarState;
 LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                                    UINT_PTR id, DWORD_PTR reference);
+LRESULT CALLBACK MenuBarChildProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                                  UINT_PTR id, DWORD_PTR reference);
+BOOL CALLBACK InstallChildSubclass(HWND window, LPARAM reference);
+BOOL CALLBACK RemoveChildSubclass(HWND window, LPARAM reference);
 MenuBarState* State(HWND window);
 void CancelMenuMode(HWND bar);
 bool BeginMenuMode(HWND bar, int index = -1);
@@ -225,27 +229,50 @@ bool HandleMnemonic(HWND bar, wchar_t character) {
     return false;
 }
 
-LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
-                                   UINT_PTR id, DWORD_PTR reference) {
-    const auto bar = reinterpret_cast<HWND>(reference);
-    if (!bar || !IsWindow(bar)) {
-        RemoveWindowSubclass(window, MenuBarParentProc, id);
-        return DefSubclassProc(window, message, wParam, lParam);
+bool IsKeyboardOwner(HWND bar) {
+    const auto parent = GetParent(bar);
+    const auto focus = GetFocus();
+    if (!parent || !IsWindow(parent) || !IsWindow(focus) ||
+        (focus != parent && focus != bar && !IsChild(parent, focus)))
+        return false;
+    for (auto child = GetWindow(parent, GW_CHILD); child;
+         child = GetWindow(child, GW_HWNDNEXT)) {
+        if (!internal::IsLibraryWindow(child, MenuBarClass)) continue;
+        if (!IsWindowEnabled(child) || !IsWindowVisible(child)) continue;
+        return child == bar;
     }
-    auto* state = State(bar);
-    if (!state) return DefSubclassProc(window, message, wParam, lParam);
+    return true;
+}
+
+void ObserveChild(HWND bar, HWND child) {
+    if (!IsWindow(bar) || !IsWindow(child) || child == bar) return;
+    const auto id = reinterpret_cast<UINT_PTR>(bar);
+    SetWindowSubclass(child, MenuBarChildProc, id, reinterpret_cast<DWORD_PTR>(bar));
+    EnumChildWindows(child, InstallChildSubclass, reinterpret_cast<LPARAM>(bar));
+}
+
+void RemoveChildObservers(HWND bar) {
+    const auto parent = IsWindow(bar) ? GetParent(bar) : nullptr;
+    if (parent && IsWindow(parent))
+        EnumChildWindows(parent, RemoveChildSubclass, reinterpret_cast<LPARAM>(bar));
+}
+
+bool HandleRoutedKeyboard(HWND bar, UINT message, WPARAM wParam) {
+    auto* state = IsWindow(bar) ? State(bar) : nullptr;
+    if (!state) return false;
     switch (message) {
     case WM_KEYDOWN:
         if (wParam == VK_F10) {
             BeginMenuMode(bar);
-            return 0;
+            return true;
         }
         break;
     case WM_SYSKEYDOWN:
         if (wParam == VK_MENU) {
             state->altDown = true;
-            return 0;
+            return true;
         }
+        state->altDown = false;
         break;
     case WM_SYSKEYUP:
         if (wParam == VK_MENU) {
@@ -255,12 +282,72 @@ LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPA
                 if (state->menuMode) CancelMenuMode(bar);
                 else BeginMenuMode(bar);
             }
-            return 0;
+            return true;
         }
         break;
     case WM_SYSCHAR:
-        if (HandleMnemonic(bar, static_cast<wchar_t>(wParam))) return 0;
+        return HandleMnemonic(bar, static_cast<wchar_t>(wParam));
+    default:
         break;
+    }
+    return false;
+}
+
+bool IsPopupActivation(HWND bar, HWND activated) {
+    if (!activated || !IsWindow(activated) || GetParent(activated) != GetParent(bar))
+        return false;
+    const auto style = GetWindowLongPtrW(activated, GWL_STYLE);
+    const auto extended = GetWindowLongPtrW(activated, GWL_EXSTYLE);
+    return (style & WS_POPUP) != 0 && (extended & WS_EX_TOOLWINDOW) != 0;
+}
+
+BOOL CALLBACK InstallChildSubclass(HWND window, LPARAM reference) {
+    const auto bar = reinterpret_cast<HWND>(reference);
+    if (bar && IsWindow(bar) && window != bar)
+        SetWindowSubclass(window, MenuBarChildProc, reinterpret_cast<UINT_PTR>(bar),
+                          reinterpret_cast<DWORD_PTR>(bar));
+    return TRUE;
+}
+
+BOOL CALLBACK RemoveChildSubclass(HWND window, LPARAM reference) {
+    const auto bar = reinterpret_cast<HWND>(reference);
+    if (bar) RemoveWindowSubclass(window, MenuBarChildProc, reinterpret_cast<UINT_PTR>(bar));
+    return TRUE;
+}
+
+LRESULT CALLBACK MenuBarChildProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                                  UINT_PTR id, DWORD_PTR reference) {
+    const auto bar = reinterpret_cast<HWND>(reference);
+    if (!bar || !IsWindow(bar)) {
+        RemoveWindowSubclass(window, MenuBarChildProc, id);
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
+    if (message == WM_PARENTNOTIFY && LOWORD(wParam) == WM_CREATE && lParam)
+        ObserveChild(bar, reinterpret_cast<HWND>(lParam));
+    if (GetFocus() == window && IsKeyboardOwner(bar) &&
+        (message == WM_KEYDOWN || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP ||
+         message == WM_SYSCHAR) && HandleRoutedKeyboard(bar, message, wParam))
+        return 0;
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, MenuBarChildProc, id);
+    return DefSubclassProc(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                                   UINT_PTR id, DWORD_PTR reference) {
+    const auto bar = reinterpret_cast<HWND>(reference);
+    if (!bar || !IsWindow(bar)) {
+        RemoveWindowSubclass(window, MenuBarParentProc, id);
+        return DefSubclassProc(window, message, wParam, lParam);
+    }
+    auto* state = State(bar);
+    if (!state) return DefSubclassProc(window, message, wParam, lParam);
+    if (message == WM_PARENTNOTIFY && LOWORD(wParam) == WM_CREATE && lParam)
+        ObserveChild(bar, reinterpret_cast<HWND>(lParam));
+    if (IsKeyboardOwner(bar) &&
+        (message == WM_KEYDOWN || message == WM_SYSKEYDOWN || message == WM_SYSKEYUP ||
+         message == WM_SYSCHAR) && HandleRoutedKeyboard(bar, message, wParam))
+        return 0;
+    switch (message) {
     case WM_ACTIVATEAPP:
         if (!wParam) {
             if (state->popupOpen) internal::CancelPopupMenu(bar);
@@ -268,14 +355,18 @@ LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPA
         }
         break;
     case WM_ACTIVATE:
-        if (LOWORD(wParam) == WA_INACTIVE && (!state->popupOpen || !lParam))
-            CancelMenuMode(bar);
+        if (LOWORD(wParam) == WA_INACTIVE) {
+            if (!state->popupOpen) CancelMenuMode(bar);
+            else if (!IsPopupActivation(bar, reinterpret_cast<HWND>(lParam)))
+                internal::CancelPopupMenu(bar);
+        }
         break;
     case WM_CANCELMODE:
         if (state->popupOpen) internal::CancelPopupMenu(bar);
         else CancelMenuMode(bar);
         break;
     case WM_NCDESTROY:
+        RemoveChildObservers(bar);
         CancelMenuMode(bar);
         RemoveWindowSubclass(window, MenuBarParentProc, id);
         break;
@@ -307,6 +398,7 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;
     switch (message) {
     case WM_NCDESTROY:
+        RemoveChildObservers(window);
         if (const auto parent = GetParent(window); parent && IsWindow(parent))
             RemoveWindowSubclass(parent, MenuBarParentProc,
                                  reinterpret_cast<UINT_PTR>(window));
@@ -341,6 +433,7 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
             state->altDown = true;
             return 0;
         }
+        if (state) state->altDown = false;
         return DefWindowProcW(window, message, wParam, lParam);
     case WM_SYSKEYUP:
         if (state && wParam == VK_MENU) {
@@ -478,6 +571,8 @@ HWND Create(const MenuBarOptions& options) {
         SetLastError(error);
         return nullptr;
     }
+    if (window) EnumChildWindows(options.parent, InstallChildSubclass,
+                                 reinterpret_cast<LPARAM>(window));
     return window;
 }
 

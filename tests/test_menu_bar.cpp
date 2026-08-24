@@ -15,6 +15,8 @@ int commandId{};
 LPARAM commandSource{};
 HWND menuBar{};
 HWND originalFocus{};
+HWND inactiveTarget{};
+RECT previousPopupBounds{};
 
 int PopupCount() {
     int count{};
@@ -94,6 +96,11 @@ void CALLBACK CheckViewPopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
     RECT popupBounds{};
     CHECK(GetWindowRect(popup, &popupBounds));
     CHECK(popupBounds.top == view.bottom || popupBounds.bottom == view.top);
+    CHECK(previousPopupBounds.left != popupBounds.left ||
+          previousPopupBounds.right != popupBounds.right);
+    POINT viewCenter{(view.left + view.right) / 2, (view.top + view.bottom) / 2};
+    CHECK(SendMessageW(menuBar, wcw::internal::MenuBarNextItemMessage, 0,
+                       reinterpret_cast<LPARAM>(&viewCenter)) == 2);
     if (popup) SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
 }
 
@@ -102,6 +109,7 @@ void CALLBACK SwitchPopupRight(HWND owner, UINT, UINT_PTR timer, DWORD) {
     const auto popup = Popup();
     CHECK(popup != nullptr);
     if (!popup) return;
+    CHECK(GetWindowRect(popup, &previousPopupBounds));
     SendMessageW(popup, WM_KEYDOWN, VK_RIGHT, 0);
     SetTimer(owner, timer + 100, 1, CheckViewPopup);
 }
@@ -134,6 +142,15 @@ void CALLBACK CancelWithAlt(HWND owner, UINT, UINT_PTR timer, DWORD) {
     const auto popup = Popup();
     CHECK(popup != nullptr);
     if (popup) SendMessageW(popup, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
+}
+
+void CALLBACK DeactivateParent(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (popup && inactiveTarget)
+        SendMessageW(owner, WM_ACTIVATE, WA_INACTIVE,
+                     reinterpret_cast<LPARAM>(inactiveTarget));
 }
 
 void CALLBACK NestedLeftBeforeSwitch(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -291,7 +308,7 @@ int main() {
     CHECK(SetFocus(originalFocus) != nullptr || GetFocus() == originalFocus);
 
     SetTimer(dialog, 201, 1, EscapePopup);
-    SendMessageW(dialog, WM_KEYDOWN, VK_F10, 0);
+    SendMessageW(originalFocus, WM_KEYDOWN, VK_F10, 0);
     CHECK(GetFocus() == menuBar);
     SendMessageW(menuBar, WM_KEYDOWN, VK_RIGHT, 0);
     SendMessageW(menuBar, WM_KEYDOWN, VK_DOWN, 0);
@@ -299,35 +316,47 @@ int main() {
     CHECK(GetFocus() == originalFocus);
 
     SetTimer(dialog, 202, 1, SwitchPopupRight);
-    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    SendMessageW(originalFocus, WM_SYSCHAR, L'f', 1L << 29);
     CHECK(Popup() == nullptr);
     CHECK(GetFocus() == originalFocus);
 
     SetTimer(dialog, 203, 1, HoverSwitchPopup);
-    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    SendMessageW(originalFocus, WM_SYSCHAR, L'f', 1L << 29);
     CHECK(Popup() == nullptr);
     CHECK(GetFocus() == originalFocus);
 
     SetTimer(dialog, 204, 1, ClickCurrentPopup);
-    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    SendMessageW(originalFocus, WM_SYSCHAR, L'f', 1L << 29);
     CHECK(Popup() == nullptr);
     CHECK(GetFocus() == originalFocus);
 
     SetTimer(dialog, 205, 1, CancelWithAlt);
-    SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    SendMessageW(originalFocus, WM_SYSCHAR, L'f', 1L << 29);
     CHECK(Popup() == nullptr);
     CHECK(GetFocus() == originalFocus);
 
     SetTimer(dialog, 206, 1, NestedLeftBeforeSwitch);
+    SendMessageW(originalFocus, WM_SYSCHAR, L'f', 1L << 29);
+    CHECK(Popup() == nullptr);
+    CHECK(GetFocus() == originalFocus);
+
+    inactiveTarget = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 40, 20,
+                                     nullptr, nullptr, instance, nullptr);
+    CHECK(inactiveTarget != nullptr);
+    SetTimer(dialog, 207, 1, DeactivateParent);
     SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
     CHECK(Popup() == nullptr);
     CHECK(GetFocus() == originalFocus);
 
     SendMessageW(dialog, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
+    SendMessageW(dialog, WM_SYSKEYDOWN, L'x', 1L << 29);
     SendMessageW(dialog, WM_SYSKEYUP, VK_MENU, 1L << 29);
+    CHECK(GetFocus() == originalFocus);
+    SendMessageW(originalFocus, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
+    SendMessageW(originalFocus, WM_SYSKEYUP, VK_MENU, 1L << 29);
     CHECK(GetFocus() == menuBar);
-    SendMessageW(dialog, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
-    SendMessageW(dialog, WM_SYSKEYUP, VK_MENU, 1L << 29);
+    SendMessageW(menuBar, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
+    SendMessageW(menuBar, WM_SYSKEYUP, VK_MENU, 1L << 29);
     CHECK(GetFocus() == originalFocus);
 
     CHECK(wcw::SetMenuBarItems(menuBar, firstItems));
@@ -354,6 +383,7 @@ int main() {
     CHECK(!IsWindow(dialog));
     CHECK(Popup() == nullptr);
 
+    if (inactiveTarget) DestroyWindow(inactiveTarget);
     menuBar = nullptr;
     wcw::Shutdown();
     return testFailures ? 1 : 0;
