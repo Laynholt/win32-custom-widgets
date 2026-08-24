@@ -79,8 +79,8 @@ Menu commands arrive through the parent `WM_COMMAND`: `LOWORD(wParam)` is the it
 `lParam` identifies the menu bar `HWND`. Use `&` for keyboard mnemonics (`&&` renders a literal
 ampersand); `Alt`/`F10`, arrows, `Enter`, `Space`, and `Escape` provide standard menu navigation.
 `ControlOptions::appearance` styles the bar and `MenuBarOptions::menuAppearance` styles its popups.
-Calling `SetTheme` updates the menu bar and its open menus with the active theme; use
-`SetMenuBarItems` to replace the item tree.
+Calling `SetTheme` updates the menu bar and controls; newly opened menus use the current theme.
+Use `SetMenuBarItems` to replace the item tree.
 
 Buttons send `WM_COMMAND` with `BN_CLICKED`. Value, check, and selection changes arrive through
 `WM_NOTIFY` with `WCN_VALUE_CHANGED`, `WCN_CHECK_CHANGED`, and `WCN_SELECTION_CHANGED`; cast the

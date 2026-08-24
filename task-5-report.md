@@ -29,3 +29,7 @@ Tests:
 
 Concern: visual UI inspection was intentionally not performed; the user requested automated
 build/test verification only.
+
+Fix round 1: corrected the `SetTheme` documentation to avoid claiming that already-open popup
+menus are updated; it now documents menu bar/control updates and current theme use for newly
+opened menus.
