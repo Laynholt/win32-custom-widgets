@@ -115,6 +115,12 @@ void CALLBACK InspectAccessibleMenuBar(HWND owner, UINT, UINT_PTR timer, DWORD) 
     SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
 }
 
+void CALLBACK CloseAccessiblePopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    if (const auto popup = FindWindowW(L"WcwMenuPopup", nullptr))
+        SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
 void CALLBACK SelectMenuWithKeyboard(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     const auto popup = FindWindowW(L"WcwMenuPopup", nullptr);
@@ -498,9 +504,36 @@ int main() {
     CHECK(TextProperty(menuBarAccessible, &IAccessible::get_accDefaultAction, firstBarItem) ==
           L"Open");
 
+    VARIANT menuBarNavigation;
+    VariantInit(&menuBarNavigation);
+    CHECK(menuBarAccessible->accNavigate(NAVDIR_FIRSTCHILD, Self(), &menuBarNavigation) == S_OK);
+    CHECK(menuBarNavigation.vt == VT_I4 && menuBarNavigation.lVal == 1);
+    VariantClear(&menuBarNavigation);
+    CHECK(menuBarAccessible->accNavigate(NAVDIR_NEXT, firstBarItem, &menuBarNavigation) == S_OK);
+    CHECK(menuBarNavigation.vt == VT_I4 && menuBarNavigation.lVal == 2);
+    VariantClear(&menuBarNavigation);
+    auto lastBarItem = Self();
+    lastBarItem.lVal = 3;
+    CHECK(menuBarAccessible->accNavigate(NAVDIR_NEXT, lastBarItem, &menuBarNavigation) == S_FALSE);
+    CHECK(menuBarNavigation.vt == VT_EMPTY);
+    CHECK(menuBarAccessible->accNavigate(NAVDIR_LASTCHILD, Self(), &menuBarNavigation) == S_OK);
+    CHECK(menuBarNavigation.vt == VT_I4 && menuBarNavigation.lVal == 3);
+    VariantClear(&menuBarNavigation);
+
     long left{}, top{}, width{}, height{};
     CHECK(menuBarAccessible->accLocation(&left, &top, &width, &height, firstBarItem) == S_OK);
     CHECK(width > 0 && height > 0);
+    const auto originalLeft = left;
+    const auto originalTop = top;
+    CHECK(MoveWindow(menuBar, 240, 250, 300, 30, TRUE));
+    CHECK(menuBarAccessible->accLocation(&left, &top, &width, &height, firstBarItem) == S_OK);
+    CHECK(left != originalLeft || top != originalTop);
+    const auto movedLeft = left;
+    const auto movedTop = top;
+    CHECK(MoveWindow(menuBar, 270, 280, 300, 30, TRUE));
+    SendMessageW(menuBar, WM_DPICHANGED_AFTERPARENT, 0, 0);
+    CHECK(menuBarAccessible->accLocation(&left, &top, &width, &height, firstBarItem) == S_OK);
+    CHECK(left != movedLeft || top != movedTop);
     VARIANT hit;
     VariantInit(&hit);
     CHECK(menuBarAccessible->accHitTest(left + width / 2, top + height / 2, &hit) == S_OK);
@@ -532,6 +565,26 @@ int main() {
     CHECK((State(menuBarAccessible, firstBarItem) & STATE_SYSTEM_COLLAPSED) != 0);
     CHECK(menuBarStateEvents > 0);
     CHECK(menuBarStateChild == 1);
+
+    EnableWindow(parent, FALSE);
+    const auto disabledAncestorState = State(menuBarAccessible, firstBarItem);
+    CHECK((disabledAncestorState & STATE_SYSTEM_UNAVAILABLE) != 0);
+    CHECK((disabledAncestorState & STATE_SYSTEM_FOCUSABLE) == 0);
+    SetTimer(parent, 6, 1, CloseAccessiblePopup);
+    CHECK(menuBarAccessible->accDoDefaultAction(firstBarItem) == E_ACCESSDENIED);
+    KillTimer(parent, 6);
+    EnableWindow(parent, TRUE);
+
+    const std::vector<wcw::MenuItem> replacementBarItems{
+        {.text = L"&View", .children = {{.id = 82, .text = L"Zoom"}}},
+        {.text = L"&Tools", .enabled = false},
+    };
+    CHECK(wcw::SetMenuBarItems(menuBar, replacementBarItems));
+    CHECK(menuBarAccessible->get_accChildCount(&menuBarChildCount) == S_OK);
+    CHECK(menuBarChildCount == 2);
+    auto replacementBarItem = Self();
+    replacementBarItem.lVal = 1;
+    CHECK(TextProperty(menuBarAccessible, &IAccessible::get_accName, replacementBarItem) == L"View");
     menuBarAccessible->Release();
     watchedMenuBar = nullptr;
 

@@ -409,6 +409,23 @@ void CALLBACK InspectAccessibility(HWND owner, UINT, UINT_PTR timer, DWORD) {
         CHECK(accessible->get_accDefaultAction(Child(2), &action) == S_OK);
         CHECK(action && wcscmp(action, L"Execute") == 0);
         SysFreeString(action);
+
+        VARIANT state{};
+        CHECK(accessible->get_accState(Child(1), &state) == S_OK);
+        CHECK(state.vt == VT_I4 && (state.lVal & STATE_SYSTEM_COLLAPSED));
+        VariantClear(&state);
+        CHECK(accessible->accDoDefaultAction(Child(1)) == S_OK);
+        const auto childPopup = OtherPopup(popup);
+        CHECK(childPopup != nullptr);
+        CHECK(accessible->get_accState(Child(1), &state) == S_OK);
+        CHECK(state.vt == VT_I4 && (state.lVal & STATE_SYSTEM_EXPANDED));
+        CHECK((state.lVal & STATE_SYSTEM_COLLAPSED) == 0);
+        VariantClear(&state);
+        if (childPopup) SendMessageW(childPopup, WM_KEYDOWN, VK_LEFT, 0);
+        CHECK(PopupCount() == 1);
+        CHECK(accessible->get_accState(Child(1), &state) == S_OK);
+        CHECK(state.vt == VT_I4 && (state.lVal & STATE_SYSTEM_COLLAPSED));
+        VariantClear(&state);
         accessible->Release();
     }
 

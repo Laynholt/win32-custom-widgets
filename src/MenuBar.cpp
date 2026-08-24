@@ -455,6 +455,8 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
     if (state && (message == WM_SIZE || message == WM_DPICHANGED ||
                   message == internal::ThemeChangedMessage))
         Layout(window, *state);
+    else if (state && (message == WM_MOVE || message == WM_DPICHANGED_AFTERPARENT))
+        SyncAccessibility(window, *state);
 
     LRESULT shared{};
     if (internal::HandleControlMessage(window, message, wParam, lParam, shared)) return shared;

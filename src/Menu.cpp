@@ -107,7 +107,7 @@ bool Contains(RECT rect, POINT point) {
 }
 
 std::vector<internal::AccessibleMenuItem> AccessibleItems(const PopupLevel& level,
-                                                          int& focusedChild) {
+                                                          int& focusedChild, int expandedRow = -1) {
     std::vector<internal::AccessibleMenuItem> accessible;
     RECT bounds{};
     GetWindowRect(level.window, &bounds);
@@ -122,7 +122,7 @@ std::vector<internal::AccessibleMenuItem> AccessibleItems(const PopupLevel& leve
         RECT visible{};
         const bool onScreen = IntersectRect(&visible, &screenBounds, &bounds) != FALSE;
         accessible.push_back({item.text, visible, row, item.enabled, item.checked,
-                              !item.children.empty(), !onScreen});
+                              !item.children.empty(), !onScreen, row == expandedRow});
         if (row == level.selected) focusedChild = child;
     }
     return accessible;
@@ -354,7 +354,12 @@ void PopupController::OpenChild(size_t level, int row, bool immediate) {
     auto rowBounds = levels_[level]->rows[row];
     OffsetRect(&rowBounds, parentBounds.left,
                parentBounds.top - levels_[level]->scrollOffset);
-    CreateLevel(item.children, rowBounds, false);
+    if (CreateLevel(item.children, rowBounds, false)) {
+        const auto focusedChild = UpdateAccessibility(level);
+        if (focusedChild)
+            internal::NotifyAccessibility(levels_[level]->window, EVENT_OBJECT_FOCUS,
+                                          focusedChild);
+    }
 }
 
 void PopupController::CloseFrom(size_t level) {
@@ -597,7 +602,8 @@ void PopupController::WindowDestroyed(HWND window) {
 int PopupController::UpdateAccessibility(size_t level) {
     if (level >= levels_.size() || !levels_[level]->window) return 0;
     int focusedChild{};
-    auto items = AccessibleItems(*levels_[level], focusedChild);
+    const int expandedRow = level + 1 < levels_.size() ? levels_[level]->selected : -1;
+    auto items = AccessibleItems(*levels_[level], focusedChild, expandedRow);
     internal::UpdateMenuAccessibility(levels_[level]->window, std::move(items), focusedChild);
     return focusedChild;
 }

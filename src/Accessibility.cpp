@@ -213,7 +213,10 @@ public:
         if (FAILED(ready)) return ready;
         if (const auto* item = MenuItem(child)) {
             state->vt = VT_I4;
-            auto flags = item->enabled ? STATE_SYSTEM_FOCUSABLE : STATE_SYSTEM_UNAVAILABLE;
+            const bool enabled = item->enabled &&
+                                 (info_.kind != AccessibleKind::MenuBar ||
+                                  EffectivelyEnabled(window_));
+            auto flags = enabled ? STATE_SYSTEM_FOCUSABLE : STATE_SYSTEM_UNAVAILABLE;
             if (item->checked) flags |= STATE_SYSTEM_CHECKED;
             if (item->hasPopup) flags |= STATE_SYSTEM_HASPOPUP;
             if (item->hasPopup)
@@ -402,7 +405,9 @@ public:
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
         if (const auto* item = MenuItem(child)) {
-            if (!item->enabled) return E_ACCESSDENIED;
+            if (!item->enabled ||
+                (info_.kind == AccessibleKind::MenuBar && !EffectivelyEnabled(window_)))
+                return E_ACCESSDENIED;
             SendMessageW(window_, MenuActivateAccessibleMessage, item->row, 0);
             return S_OK;
         }
