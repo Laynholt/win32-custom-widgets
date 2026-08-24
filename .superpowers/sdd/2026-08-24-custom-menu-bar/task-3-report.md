@@ -112,3 +112,55 @@ Self-review:
 - `rtk git diff --check` is clean.
 
 Concerns: none known. Popup activation is recognized by its owned parent plus `WS_POPUP | WS_EX_TOOLWINDOW`; other same-process `WM_ACTIVATE(WA_INACTIVE)` targets cancel the controller. `WM_ACTIVATEAPP(FALSE)` remains unconditional.
+
+## Reviewer fix round 2
+
+Implementation:
+
+- Added an internal ownership query backed by the active `PopupController` level HWNDs; `WM_ACTIVATE` now accepts only a live popup window actually owned by the current controller, including nested popup levels.
+- Removed the `WS_POPUP | WS_EX_TOOLWINDOW` style/owner heuristic, so a foreign same-owner toolwindow cancels the menu controller.
+- Added a timer-driven regression using a foreign same-owner `WS_EX_TOOLWINDOW` and preserved destruction-safe cancellation behavior.
+
+Files:
+
+- `src/Internal.h`
+- `src/Menu.cpp`
+- `src/MenuBar.cpp`
+- `tests/test_menu_bar.cpp`
+- `.superpowers/sdd/2026-08-24-custom-menu-bar/task-3-report.md`
+
+Exact RED on `ecdbae5` after adding the foreign same-owner toolwindow regression:
+
+```powershell
+rtk cmake --build build --config Debug --target MenuBarTests; rtk ctest --test-dir build -C Debug -R '^MenuBarTests$' --output-on-failure
+```
+
+Build succeeded, then `MenuBarTests` failed (`exit_code=1`) at `tests/test_menu_bar.cpp:164: CHECK(false) failed` while the foreign toolwindow incorrectly remained treated as a menu popup.
+
+Exact focused GREEN:
+
+```powershell
+rtk cmake --build build --config Debug --target MenuBarTests; rtk ctest --test-dir build -C Debug -R '^MenuBarTests$' --output-on-failure
+```
+
+Result: build succeeded; `MenuBarTests` passed 1/1, 100%.
+
+Exact focused regression GREEN:
+
+```powershell
+rtk ctest --test-dir build -C Debug -R '^(MenuBarTests|MenuTests)$' --output-on-failure
+```
+
+Result: `MenuTests` and `MenuBarTests` passed 2/2, 100%.
+
+Exact full Debug verification:
+
+```powershell
+rtk cmake --build build --config Debug; rtk ctest --test-dir build -C Debug --output-on-failure
+```
+
+Result: all 13/13 CTest targets passed, 100%, including `MenuTests`, `MenuBarTests`, `AccessibilityTests`, and `ConsumerSmoke`; total test time 26.30 seconds.
+
+Self-review: exact controller HWND ownership is queried before accepting activation, live-window checks remain in the menu-bar path, and normal popup/menu-button behavior remains unchanged. `rtk git diff --check` is clean.
+
+Concerns: none known.

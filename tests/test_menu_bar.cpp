@@ -144,13 +144,25 @@ void CALLBACK CancelWithAlt(HWND owner, UINT, UINT_PTR timer, DWORD) {
     if (popup) SendMessageW(popup, WM_SYSKEYDOWN, VK_MENU, 1L << 29);
 }
 
+void CALLBACK CheckForeignActivation(HWND owner, UINT, UINT_PTR timer, DWORD);
+
 void CALLBACK DeactivateParent(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     const auto popup = Popup();
     CHECK(popup != nullptr);
-    if (popup && inactiveTarget)
+    if (popup && inactiveTarget) {
+        SetTimer(owner, timer + 1, 1, CheckForeignActivation);
         SendMessageW(owner, WM_ACTIVATE, WA_INACTIVE,
                      reinterpret_cast<LPARAM>(inactiveTarget));
+    }
+}
+
+void CALLBACK CheckForeignActivation(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    if (!popup) return;
+    CHECK(false);
+    SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
 }
 
 void CALLBACK NestedLeftBeforeSwitch(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -340,11 +352,12 @@ int main() {
     CHECK(Popup() == nullptr);
     CHECK(GetFocus() == originalFocus);
 
-    inactiveTarget = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 40, 20,
-                                     nullptr, nullptr, instance, nullptr);
+    inactiveTarget = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP,
+                                     0, 0, 40, 20, dialog, nullptr, instance, nullptr);
     CHECK(inactiveTarget != nullptr);
     SetTimer(dialog, 207, 1, DeactivateParent);
     SendMessageW(dialog, WM_SYSCHAR, L'f', 1L << 29);
+    KillTimer(dialog, 208);
     CHECK(Popup() == nullptr);
     CHECK(GetFocus() == originalFocus);
 

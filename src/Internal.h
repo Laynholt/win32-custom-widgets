@@ -77,6 +77,7 @@ PopupMenuResult ShowMenuBarPopup(HWND commandTarget, HWND source, RECT anchor,
                                  std::vector<MenuItem> items,
                                  const StyleOverride& appearance, HWND menuBar, int topIndex);
 void CancelPopupMenu(HWND source);
+bool IsPopupMenuWindow(HWND source, HWND window);
 
 inline constexpr UINT TextBoxSetTextMessage = WM_APP + 0x571;
 inline constexpr UINT TextBoxGetTextMessage = WM_APP + 0x572;

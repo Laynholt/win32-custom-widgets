@@ -141,6 +141,11 @@ public:
     int Command() const { return command_; }
     HWND CommandTarget() const { return commandTarget_; }
     HWND Source() const { return source_; }
+    bool OwnsWindow(HWND window) const {
+        for (const auto& level : levels_)
+            if (level && level->window == window) return true;
+        return false;
+    }
     int NextTopIndex() const { return nextTopIndex_; }
     void Select(size_t level, int row);
     void OpenChild(size_t level, int row, bool immediate);
@@ -889,6 +894,11 @@ PopupMenuResult ShowMenuBarPopup(HWND commandTarget, HWND source, RECT anchor,
 
 void CancelPopupMenu(HWND source) {
     if (activeController && activeController->Source() == source) activeController->Cancel();
+}
+
+bool IsPopupMenuWindow(HWND source, HWND window) {
+    return activeController && activeController->Source() == source &&
+           activeController->OwnsWindow(window);
 }
 
 } // namespace internal

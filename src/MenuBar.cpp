@@ -294,11 +294,7 @@ bool HandleRoutedKeyboard(HWND bar, UINT message, WPARAM wParam) {
 }
 
 bool IsPopupActivation(HWND bar, HWND activated) {
-    if (!activated || !IsWindow(activated) || GetParent(activated) != GetParent(bar))
-        return false;
-    const auto style = GetWindowLongPtrW(activated, GWL_STYLE);
-    const auto extended = GetWindowLongPtrW(activated, GWL_EXSTYLE);
-    return (style & WS_POPUP) != 0 && (extended & WS_EX_TOOLWINDOW) != 0;
+    return activated && IsWindow(activated) && internal::IsPopupMenuWindow(bar, activated);
 }
 
 BOOL CALLBACK InstallChildSubclass(HWND window, LPARAM reference) {
