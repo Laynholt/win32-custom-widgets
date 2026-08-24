@@ -755,7 +755,7 @@ rtk git commit -m "demo: showcase custom menu bar"
 
 ```powershell
 rtk git status --short
-rtk git diff --check HEAD~5..HEAD
+rtk git diff --check 97a7ce8..HEAD
 rtk cmake -S . -B build -DCMAKE_CONFIGURATION_TYPES="Debug;Release" -DWCW_BUILD_DEMO=ON -DBUILD_TESTING=ON
 ```
 
