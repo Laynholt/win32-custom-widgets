@@ -4,6 +4,7 @@
 #include <wcw/Runtime.h>
 
 #include <oleacc.h>
+#include <commctrl.h>
 #include <windows.h>
 
 #include <string>
@@ -27,6 +28,15 @@ LONG menuBarFocusChild;
 LONG menuBarStateChild;
 bool menuBarPopupInspected;
 bool closeFallbackFired;
+
+constexpr UINT_PTR SuppressMenuBarSizeSubclassId = 0x54455354;
+
+LRESULT CALLBACK SuppressMenuBarSize(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+                                     UINT_PTR id, DWORD_PTR reference) {
+    if (message == WM_SIZE && reference) return 0;
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(window, SuppressMenuBarSize, id);
+    return DefSubclassProc(window, message, wParam, lParam);
+}
 
 void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child,
                            DWORD, DWORD) {
@@ -528,6 +538,29 @@ int main() {
     CHECK(MoveWindow(menuBar, 240, 250, 300, 30, TRUE));
     CHECK(menuBarAccessible->accLocation(&left, &top, &width, &height, firstBarItem) == S_OK);
     CHECK(left != originalLeft || top != originalTop);
+    const auto parentMovedLeft = left;
+    const auto parentMovedTop = top;
+    CHECK(MoveWindow(parent, 40, 50, 600, 400, TRUE));
+    CHECK(menuBarAccessible->accLocation(&left, &top, &width, &height, firstBarItem) == S_OK);
+    CHECK(left != parentMovedLeft || top != parentMovedTop);
+
+    const auto beforeDpiHeight = height;
+    const auto originalStyle = GetWindowLongPtrW(menuBar, GWL_STYLE);
+    SetWindowLongPtrW(menuBar, GWL_STYLE, originalStyle | WS_BORDER);
+    CHECK(SetWindowSubclass(menuBar, SuppressMenuBarSize, SuppressMenuBarSizeSubclassId, 1));
+    CHECK(SetWindowPos(menuBar, nullptr, 0, 0, 0, 0,
+                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                           SWP_FRAMECHANGED));
+    SendMessageW(menuBar, WM_DPICHANGED_AFTERPARENT, 0, 0);
+    CHECK(menuBarAccessible->accLocation(&left, &top, &width, &height, firstBarItem) == S_OK);
+    CHECK(height < beforeDpiHeight);
+    SetWindowLongPtrW(menuBar, GWL_STYLE, originalStyle);
+    CHECK(SetWindowPos(menuBar, nullptr, 0, 0, 0, 0,
+                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                           SWP_FRAMECHANGED));
+    SendMessageW(menuBar, WM_DPICHANGED_AFTERPARENT, 0, 0);
+    CHECK(RemoveWindowSubclass(menuBar, SuppressMenuBarSize, SuppressMenuBarSizeSubclassId));
+
     const auto movedLeft = left;
     const auto movedTop = top;
     CHECK(MoveWindow(menuBar, 270, 280, 300, 30, TRUE));

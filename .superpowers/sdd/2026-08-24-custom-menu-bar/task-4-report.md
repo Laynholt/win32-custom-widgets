@@ -120,3 +120,56 @@ Result: all 13/13 CTest targets passed, including `AccessibilityTests`,
 
 Concerns: none known. High Contrast behavior remains delegated to the
 existing shared menu-color resolver.
+
+## Reviewer fix round 2
+
+Implementation:
+
+- `WM_DPICHANGED_AFTERPARENT` now runs the existing `Layout` path before
+  accessibility synchronization, so DPI-dependent item rectangles are
+  recalculated.
+- The existing per-menu-bar `MenuBarParentProc` now synchronizes accessibility
+  on parent `WM_MOVE`, keeping child menu-bar screen bounds current after
+  parent relocation without polling or a global hook.
+- Added regressions for parent relocation and for a DPI-after-parent layout
+  notification isolated from the normal `WM_SIZE` path.
+
+Files:
+
+- `src/MenuBar.cpp`
+- `tests/test_accessibility.cpp`
+
+Exact RED:
+
+```powershell
+rtk cmake --build build --config Debug --target AccessibilityTests
+rtk ctest --test-dir build -C Debug -R "AccessibilityTests" --output-on-failure
+```
+
+The build succeeded, then `AccessibilityTests` failed as expected: parent
+relocation left the cached screen bounds unchanged, and the isolated
+`WM_DPICHANGED_AFTERPARENT` layout assertion observed the old item height.
+
+Exact focused GREEN:
+
+```powershell
+rtk cmake --build build --config Debug --target AccessibilityTests MenuBarTests MenuTests
+rtk ctest --test-dir build -C Debug -R "(AccessibilityTests|MenuBarTests|MenuTests)" --output-on-failure
+```
+
+Result: all 3/3 focused tests passed.
+
+Exact full Debug verification:
+
+```powershell
+rtk ctest --test-dir build -C Debug --output-on-failure
+```
+
+Result: all 13/13 CTest targets passed, including `AccessibilityTests`,
+`MenuTests`, `MenuBarTests`, and `ConsumerSmoke`.
+
+`rtk git diff --check` is clean.
+
+Concerns: none known. The DPI regression uses a test-only subclass to suppress
+the normal size notification while exercising the `WM_DPICHANGED_AFTERPARENT`
+layout path; no manual/UI inspection was performed.

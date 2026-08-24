@@ -427,6 +427,9 @@ LRESULT CALLBACK MenuBarParentProc(HWND window, UINT message, WPARAM wParam, LPA
         if (state->popupOpen) internal::CancelPopupMenu(bar);
         else CancelMenuMode(bar);
         break;
+    case WM_MOVE:
+        SyncAccessibility(bar, *state);
+        break;
     case WM_NCDESTROY:
         RemoveChildObservers(bar);
         CancelMenuMode(bar);
@@ -453,9 +456,10 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         CancelPress(window, *state);
     }
     if (state && (message == WM_SIZE || message == WM_DPICHANGED ||
+                  message == WM_DPICHANGED_AFTERPARENT ||
                   message == internal::ThemeChangedMessage))
         Layout(window, *state);
-    else if (state && (message == WM_MOVE || message == WM_DPICHANGED_AFTERPARENT))
+    else if (state && message == WM_MOVE)
         SyncAccessibility(window, *state);
 
     LRESULT shared{};
