@@ -11,6 +11,13 @@ namespace wcw::internal {
 
 inline constexpr UINT ThemeChangedMessage = WM_APP + 0x570;
 
+struct MenuColors {
+    ResolvedStyle style;
+    Color selectedText;
+};
+
+MenuColors ResolveMenuColors(const StyleOverride& appearance);
+
 HINSTANCE Instance();
 bool RegisterControlClass(const wchar_t* name, WNDPROC procedure,
                           UINT style = CS_HREDRAW | CS_VREDRAW);
@@ -59,6 +66,7 @@ bool RegisterComboBoxClasses();
 bool RegisterScrollViewClasses();
 bool RegisterTooltipClass();
 bool RegisterMenuClass();
+bool RegisterMenuBarClass();
 bool ShowPopupMenu(HWND commandTarget, HWND source, RECT anchor,
                    std::vector<MenuItem> items, const StyleOverride& appearance);
 void CancelPopupMenu(HWND source);
@@ -89,6 +97,8 @@ inline constexpr UINT ComboGetOpenMessage = WM_APP + 0x587;
 inline constexpr UINT ProgressGetIndeterminateMessage = WM_APP + 0x588;
 inline constexpr UINT ButtonSetMenuItemsMessage = WM_APP + 0x589;
 inline constexpr UINT ButtonGetMenuStateMessage = WM_APP + 0x58A;
+inline constexpr UINT MenuBarSetItemsMessage = WM_APP + 0x58B;
+inline constexpr UINT MenuBarHitTestMessage = WM_APP + 0x58C;
 
 HWND CreateNumericBoxWindow(const NumericBoxOptions& options);
 bool IsTextBoxWindow(HWND window, bool numericOnly = false);

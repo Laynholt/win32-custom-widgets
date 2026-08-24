@@ -101,7 +101,8 @@ bool Initialize(HINSTANCE instance) {
         !internal::RegisterTextBoxClass() || !internal::RegisterBooleanControlClasses() ||
         !internal::RegisterSliderClass() || !internal::RegisterProgressBarClass() ||
         !internal::RegisterComboBoxClasses() || !internal::RegisterScrollViewClasses() ||
-        !internal::RegisterTooltipClass() || !internal::RegisterMenuClass()) {
+        !internal::RegisterTooltipClass() || !internal::RegisterMenuClass() ||
+        !internal::RegisterMenuBarClass()) {
         Gdiplus::GdiplusShutdown(state.gdiplusToken);
         state.gdiplusToken = 0;
         state.instance = nullptr;

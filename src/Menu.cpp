@@ -48,11 +48,6 @@ struct Layout {
     int chevronWidth{};
 };
 
-struct Colors {
-    ResolvedStyle style;
-    Color selectedText;
-};
-
 class PopupController;
 LRESULT PopupProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK OwnerProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
@@ -63,28 +58,6 @@ thread_local PopupController* activeController;
 Color SystemColor(int index) {
     const auto color = GetSysColor(index);
     return Color::FromRgb(GetRValue(color), GetGValue(color), GetBValue(color));
-}
-
-Colors MenuColors(const StyleOverride& appearance) {
-    const auto theme = GetTheme();
-    auto local = appearance;
-    if (!local.background) local.background = theme.palette.panel;
-    Colors colors{ResolveStyle(theme, local), {}};
-    colors.selectedText = colors.style.text;
-
-    HIGHCONTRASTW contrast{sizeof(contrast)};
-    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
-        (contrast.dwFlags & HCF_HIGHCONTRASTON)) {
-        colors.style.background = SystemColor(COLOR_MENU);
-        colors.style.text = SystemColor(COLOR_MENUTEXT);
-        colors.style.mutedText = colors.style.text;
-        colors.style.hover = SystemColor(COLOR_HIGHLIGHT);
-        colors.style.selected = colors.style.hover;
-        colors.style.border = SystemColor(COLOR_WINDOWFRAME);
-        colors.style.disabledText = SystemColor(COLOR_GRAYTEXT);
-        colors.selectedText = SystemColor(COLOR_HIGHLIGHTTEXT);
-    }
-    return colors;
 }
 
 int TextWidth(HDC dc, HFONT font, const std::wstring& text) {
@@ -223,7 +196,7 @@ bool PopupController::CreateLevel(const std::vector<MenuItem>& items, RECT ancho
         return false;
     }
 
-    const auto colors = MenuColors(appearance_);
+    const auto colors = internal::ResolveMenuColors(appearance_);
     const auto layout = MeasureLayout(raw->window, items, colors.style);
     MONITORINFO monitor{sizeof(monitor)};
     GetMonitorInfoW(MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST), &monitor);
@@ -574,7 +547,7 @@ void PopupController::UpdateRegion(HWND window) {
     if (!GetClientRect(window, &bounds)) return;
     const int width = bounds.right - bounds.left;
     const int height = bounds.bottom - bounds.top;
-    const auto style = MenuColors(appearance_).style;
+    const auto style = internal::ResolveMenuColors(appearance_).style;
     const int radius = (std::max)(
         0, (std::min)({DipToPx(style.cornerRadiusDip, paint::Dpi(window)), width / 2, height / 2}));
     const auto region = radius ? CreateRoundRectRgn(0, 0, width + 1, height + 1,
@@ -617,7 +590,7 @@ void PopupController::Paint(HWND window) {
     RECT bounds{};
     GetClientRect(window, &bounds);
     if (levelIndex != static_cast<size_t>(-1)) {
-        const auto colors = MenuColors(appearance_);
+        const auto colors = internal::ResolveMenuColors(appearance_);
         const auto& style = colors.style;
         const auto layout = MeasureLayout(window, *levels_[levelIndex]->items, style);
         if (paint::Buffer buffer(target, bounds); buffer) {
@@ -800,6 +773,28 @@ bool ShowContextMenu(HWND owner, POINT position, const ContextMenuOptions& optio
 }
 
 namespace internal {
+
+MenuColors ResolveMenuColors(const StyleOverride& appearance) {
+    const auto theme = GetTheme();
+    auto local = appearance;
+    if (!local.background) local.background = theme.palette.panel;
+    MenuColors colors{ResolveStyle(theme, local), {}};
+    colors.selectedText = colors.style.text;
+
+    HIGHCONTRASTW contrast{sizeof(contrast)};
+    if (SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0) &&
+        (contrast.dwFlags & HCF_HIGHCONTRASTON)) {
+        colors.style.background = SystemColor(COLOR_MENU);
+        colors.style.text = SystemColor(COLOR_MENUTEXT);
+        colors.style.mutedText = colors.style.text;
+        colors.style.hover = SystemColor(COLOR_HIGHLIGHT);
+        colors.style.selected = colors.style.hover;
+        colors.style.border = SystemColor(COLOR_WINDOWFRAME);
+        colors.style.disabledText = SystemColor(COLOR_GRAYTEXT);
+        colors.selectedText = SystemColor(COLOR_HIGHLIGHTTEXT);
+    }
+    return colors;
+}
 
 bool RegisterMenuClass() {
     BOOL dropShadow{};
