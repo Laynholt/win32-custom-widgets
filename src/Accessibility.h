@@ -25,6 +25,7 @@ enum class AccessibleKind {
     Panel,
     Tooltip,
     Menu,
+    MenuBar,
 };
 
 struct AccessibleMenuItem {
@@ -35,6 +36,7 @@ struct AccessibleMenuItem {
     bool checked{};
     bool hasPopup{};
     bool offscreen{};
+    bool expanded{};
 };
 
 inline constexpr UINT MenuActivateAccessibleMessage = WM_APP + 0x58B;
@@ -43,8 +45,11 @@ void RegisterAccessibility(HWND window, AccessibleKind kind, const ControlOption
                            bool readOnly = false, bool password = false,
                            std::optional<std::wstring> fallbackName = std::nullopt);
 void RegisterMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items);
+void RegisterMenuBarAccessibility(HWND window, std::vector<AccessibleMenuItem> items);
 void UpdateMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items,
                              int focusedChild);
+void UpdateMenuBarAccessibility(HWND window, std::vector<AccessibleMenuItem> items,
+                                int focusedChild);
 bool HandleAccessibilityMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                                 LRESULT& result);
 void DestroyAccessibility(HWND window);

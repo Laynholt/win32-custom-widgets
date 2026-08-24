@@ -23,6 +23,10 @@ struct Info {
     int focusedChild{};
 };
 
+bool IsMenuKind(AccessibleKind kind) {
+    return kind == AccessibleKind::Menu || kind == AccessibleKind::MenuBar;
+}
+
 bool EffectivelyEnabled(HWND window) {
     for (auto current = window; current; current = GetParent(current))
         if (!IsWindowEnabled(current)) return false;
@@ -97,7 +101,7 @@ public:
     }
     HRESULT STDMETHODCALLTYPE get_accChildCount(long* count) override {
         if (count) *count = 0;
-        if (info_.kind != AccessibleKind::Menu)
+        if (!IsMenuKind(info_.kind))
             return Forward([&] { return standard_->get_accChildCount(count); });
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
@@ -107,7 +111,7 @@ public:
     }
     HRESULT STDMETHODCALLTYPE get_accChild(VARIANT child, IDispatch** result) override {
         if (result) *result = nullptr;
-        if (info_.kind != AccessibleKind::Menu)
+        if (!IsMenuKind(info_.kind))
             return Forward([&] { return standard_->get_accChild(child, result); });
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
@@ -198,6 +202,7 @@ public:
         case AccessibleKind::Panel: role->lVal = ROLE_SYSTEM_GROUPING; break;
         case AccessibleKind::Tooltip: role->lVal = ROLE_SYSTEM_TOOLTIP; break;
         case AccessibleKind::Menu: role->lVal = ROLE_SYSTEM_MENUPOPUP; break;
+        case AccessibleKind::MenuBar: role->lVal = ROLE_SYSTEM_MENUBAR; break;
         }
         return S_OK;
     }
@@ -211,6 +216,8 @@ public:
             auto flags = item->enabled ? STATE_SYSTEM_FOCUSABLE : STATE_SYSTEM_UNAVAILABLE;
             if (item->checked) flags |= STATE_SYSTEM_CHECKED;
             if (item->hasPopup) flags |= STATE_SYSTEM_HASPOPUP;
+            if (item->hasPopup)
+                flags |= item->expanded ? STATE_SYSTEM_EXPANDED : STATE_SYSTEM_COLLAPSED;
             if (item->offscreen) flags |= STATE_SYSTEM_OFFSCREEN;
             if (child.lVal == info_.focusedChild) flags |= STATE_SYSTEM_FOCUSED;
             state->lVal = flags;
@@ -230,7 +237,8 @@ public:
         if (info_.kind == AccessibleKind::Button || info_.kind == AccessibleKind::Checkbox ||
             info_.kind == AccessibleKind::Toggle || info_.kind == AccessibleKind::TextBox ||
             info_.kind == AccessibleKind::NumericBox || info_.kind == AccessibleKind::Slider ||
-            info_.kind == AccessibleKind::ComboBox || info_.kind == AccessibleKind::ScrollView)
+            info_.kind == AccessibleKind::ComboBox || info_.kind == AccessibleKind::ScrollView ||
+            info_.kind == AccessibleKind::MenuBar)
             flags |= STATE_SYSTEM_FOCUSABLE;
         if ((info_.kind == AccessibleKind::Checkbox || info_.kind == AccessibleKind::Toggle) &&
             GetChecked(window_))
@@ -273,7 +281,7 @@ public:
         VariantInit(focus);
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
-        if (info_.kind == AccessibleKind::Menu && info_.focusedChild > 0) {
+        if (IsMenuKind(info_.kind) && info_.focusedChild > 0) {
             focus->vt = VT_I4;
             focus->lVal = info_.focusedChild;
             return S_OK;
@@ -344,7 +352,7 @@ public:
     HRESULT STDMETHODCALLTYPE accNavigate(long direction, VARIANT start,
                                           VARIANT* destination) override {
         if (destination) VariantInit(destination);
-        if (info_.kind != AccessibleKind::Menu)
+        if (!IsMenuKind(info_.kind))
             return Forward([&] { return standard_->accNavigate(direction, start, destination); });
         const auto ready = Ready();
         if (FAILED(ready)) return ready;
@@ -370,7 +378,7 @@ public:
     }
     HRESULT STDMETHODCALLTYPE accHitTest(long x, long y, VARIANT* child) override {
         if (child) VariantInit(child);
-        if (info_.kind == AccessibleKind::Menu) {
+        if (IsMenuKind(info_.kind)) {
             const auto ready = Ready();
             if (FAILED(ready)) return ready;
             if (!child) return E_POINTER;
@@ -442,7 +450,7 @@ private:
     }
 
     const AccessibleMenuItem* MenuItem(const VARIANT& child) const {
-        if (info_.kind != AccessibleKind::Menu || child.vt != VT_I4 || child.lVal <= 0 ||
+        if (!IsMenuKind(info_.kind) || child.vt != VT_I4 || child.lVal <= 0 ||
             child.lVal > static_cast<long>(info_.menuItems.size()))
             return nullptr;
         return &info_.menuItems[static_cast<size_t>(child.lVal - 1)];
@@ -498,20 +506,37 @@ void RegisterAccessibility(HWND window, AccessibleKind kind, const ControlOption
                               fallbackName.value_or(options.text), readOnly, password}, nullptr};
 }
 
-void RegisterMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items) {
+void RegisterMenu(HWND window, AccessibleKind kind, std::vector<AccessibleMenuItem> items) {
     if (window)
-        Entries()[window] = {{AccessibleKind::Menu, {}, {}, false, false, std::move(items)},
-                             nullptr};
+        Entries()[window] = {{kind, {}, {}, false, false, std::move(items)}, nullptr};
 }
 
-void UpdateMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items,
-                             int focusedChild) {
+void UpdateMenu(HWND window, AccessibleKind kind, std::vector<AccessibleMenuItem> items,
+                int focusedChild) {
     const auto found = Entries().find(window);
-    if (found == Entries().end() || found->second.info.kind != AccessibleKind::Menu) return;
+    if (found == Entries().end() || found->second.info.kind != kind) return;
     found->second.info.menuItems = items;
     found->second.info.focusedChild = focusedChild;
     if (found->second.object)
         found->second.object->UpdateMenu(std::move(items), focusedChild);
+}
+
+void RegisterMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items) {
+    RegisterMenu(window, AccessibleKind::Menu, std::move(items));
+}
+
+void RegisterMenuBarAccessibility(HWND window, std::vector<AccessibleMenuItem> items) {
+    RegisterMenu(window, AccessibleKind::MenuBar, std::move(items));
+}
+
+void UpdateMenuAccessibility(HWND window, std::vector<AccessibleMenuItem> items,
+                             int focusedChild) {
+    UpdateMenu(window, AccessibleKind::Menu, std::move(items), focusedChild);
+}
+
+void UpdateMenuBarAccessibility(HWND window, std::vector<AccessibleMenuItem> items,
+                                int focusedChild) {
+    UpdateMenu(window, AccessibleKind::MenuBar, std::move(items), focusedChild);
 }
 
 bool HandleAccessibilityMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,

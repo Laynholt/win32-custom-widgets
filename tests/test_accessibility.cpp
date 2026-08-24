@@ -19,10 +19,27 @@ int stateEvents;
 int menuCommand;
 int keyboardMenuCommand;
 HWND menuButton;
+HWND menuBar;
+HWND watchedMenuBar;
+int menuBarFocusEvents;
+int menuBarStateEvents;
+LONG menuBarFocusChild;
+LONG menuBarStateChild;
+bool menuBarPopupInspected;
 bool closeFallbackFired;
 
 void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child,
                            DWORD, DWORD) {
+    if (window == watchedMenuBar && object == OBJID_CLIENT) {
+        if (event == EVENT_OBJECT_FOCUS) {
+            ++menuBarFocusEvents;
+            menuBarFocusChild = child;
+        }
+        if (event == EVENT_OBJECT_STATECHANGE) {
+            ++menuBarStateEvents;
+            menuBarStateChild = child;
+        }
+    }
     if (window != watchedWindow || object != OBJID_CLIENT || child != CHILDID_SELF) return;
     if (event == EVENT_OBJECT_FOCUS) ++focusEvents;
     if (event == EVENT_OBJECT_VALUECHANGE) ++valueEvents;
@@ -82,6 +99,20 @@ std::wstring TextProperty(IAccessible* accessible,
     std::wstring result = text ? text : L"";
     SysFreeString(text);
     return result;
+}
+
+void CALLBACK InspectAccessibleMenuBar(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = FindWindowW(L"WcwMenuPopup", nullptr);
+    CHECK(popup != nullptr);
+    auto* accessible = Accessible(menuBar);
+    auto first = Self();
+    first.lVal = 1;
+    CHECK((State(accessible, first) & STATE_SYSTEM_EXPANDED) != 0);
+    CHECK((State(accessible, first) & STATE_SYSTEM_COLLAPSED) == 0);
+    menuBarPopupInspected = true;
+    accessible->Release();
+    SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
 }
 
 void CALLBACK SelectMenuWithKeyboard(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -439,6 +470,70 @@ int main() {
     CHECK(menuCommand == 0);
     CHECK((State(menuButtonAccessible) & STATE_SYSTEM_COLLAPSED) != 0);
     menuButtonAccessible->Release();
+
+    wcw::MenuBarOptions menuBarOptions;
+    menuBarOptions.parent = parent;
+    menuBarOptions.id = 56;
+    menuBarOptions.bounds = {200, 230, 300, 30};
+    menuBarOptions.items = {{.text = L"&File", .children = {{.id = 80, .text = L"Open"}}},
+                            {.text = L"&Edit", .enabled = false},
+                            {.text = L"&Help", .children = {{.id = 81, .text = L"About"}}}};
+    menuBar = wcw::CreateMenuBar(menuBarOptions);
+    CHECK(menuBar != nullptr);
+    ShowWindow(menuBar, SW_SHOW);
+    auto* menuBarAccessible = Accessible(menuBar);
+    CHECK(Role(menuBarAccessible) == ROLE_SYSTEM_MENUBAR);
+    long menuBarChildCount{};
+    CHECK(menuBarAccessible->get_accChildCount(&menuBarChildCount) == S_OK);
+    CHECK(menuBarChildCount == 3);
+    auto firstBarItem = Self();
+    firstBarItem.lVal = 1;
+    auto disabledBarItem = Self();
+    disabledBarItem.lVal = 2;
+    CHECK(TextProperty(menuBarAccessible, &IAccessible::get_accName, firstBarItem) == L"File");
+    CHECK((State(menuBarAccessible, firstBarItem) & STATE_SYSTEM_FOCUSABLE) != 0);
+    CHECK((State(menuBarAccessible, firstBarItem) & STATE_SYSTEM_HASPOPUP) != 0);
+    CHECK((State(menuBarAccessible, firstBarItem) & STATE_SYSTEM_COLLAPSED) != 0);
+    CHECK((State(menuBarAccessible, disabledBarItem) & STATE_SYSTEM_UNAVAILABLE) != 0);
+    CHECK(TextProperty(menuBarAccessible, &IAccessible::get_accDefaultAction, firstBarItem) ==
+          L"Open");
+
+    long left{}, top{}, width{}, height{};
+    CHECK(menuBarAccessible->accLocation(&left, &top, &width, &height, firstBarItem) == S_OK);
+    CHECK(width > 0 && height > 0);
+    VARIANT hit;
+    VariantInit(&hit);
+    CHECK(menuBarAccessible->accHitTest(left + width / 2, top + height / 2, &hit) == S_OK);
+    CHECK(hit.vt == VT_I4 && hit.lVal == 1);
+    VariantClear(&hit);
+
+    watchedWindow = menuBar;
+    watchedMenuBar = menuBar;
+    menuBarFocusEvents = 0;
+    menuBarStateEvents = 0;
+    menuBarFocusChild = CHILDID_SELF;
+    menuBarStateChild = CHILDID_SELF;
+    SendMessageW(menuBar, WM_KEYDOWN, VK_F10, 0);
+    PumpEvents();
+    CHECK((State(menuBarAccessible, firstBarItem) & STATE_SYSTEM_FOCUSED) != 0);
+    VARIANT menuBarFocus;
+    VariantInit(&menuBarFocus);
+    CHECK(menuBarAccessible->get_accFocus(&menuBarFocus) == S_OK);
+    CHECK(menuBarFocus.vt == VT_I4 && menuBarFocus.lVal == 1);
+    VariantClear(&menuBarFocus);
+    CHECK(menuBarFocusEvents > 0);
+    CHECK(menuBarFocusChild == 1);
+
+    menuBarPopupInspected = false;
+    SetTimer(parent, 5, 1, InspectAccessibleMenuBar);
+    CHECK(menuBarAccessible->accDoDefaultAction(firstBarItem) == S_OK);
+    KillTimer(parent, 5);
+    CHECK(menuBarPopupInspected);
+    CHECK((State(menuBarAccessible, firstBarItem) & STATE_SYSTEM_COLLAPSED) != 0);
+    CHECK(menuBarStateEvents > 0);
+    CHECK(menuBarStateChild == 1);
+    menuBarAccessible->Release();
+    watchedMenuBar = nullptr;
 
     wcw::ScrollViewOptions scrollOptions;
     scrollOptions.parent = parent;

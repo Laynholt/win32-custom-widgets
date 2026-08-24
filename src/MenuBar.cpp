@@ -2,6 +2,7 @@
 #include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
 
+#include "Accessibility.h"
 #include "Internal.h"
 #include "MenuModel.h"
 #include "Paint.h"
@@ -28,6 +29,7 @@ MenuBarState* State(HWND window);
 void CancelMenuMode(HWND bar);
 bool BeginMenuMode(HWND bar, int index = -1);
 void RunMenuMode(HWND bar, int index);
+void SyncAccessibility(HWND window, struct MenuBarState& state);
 
 struct MenuBarState {
     std::vector<MenuItem> items;
@@ -40,6 +42,9 @@ struct MenuBarState {
     bool menuMode{};
     bool altDown{};
     HWND savedFocus{};
+    bool accessibilityRegistered{};
+    int accessibilityFocusedChild{};
+    std::vector<bool> accessibilityExpanded;
 };
 
 MenuBarState* State(HWND window) {
@@ -58,6 +63,61 @@ int TextWidth(HDC dc, HFONT font, const std::wstring& text) {
 internal::MenuColors ResolveBarColors(HWND window, const MenuBarState& state) {
     return internal::ResolveMenuColors(
         internal::OverlayStyle(state.menuAppearance, internal::WindowStyleOverride(window)));
+}
+
+std::vector<internal::AccessibleMenuItem> AccessibleItems(HWND window,
+                                                          const MenuBarState& state,
+                                                          int& focusedChild) {
+    std::vector<internal::AccessibleMenuItem> items;
+    items.reserve(state.items.size());
+    focusedChild = state.menuMode && state.active >= 0 ? state.active + 1 : 0;
+    for (int index = 0; index < static_cast<int>(state.items.size()); ++index) {
+        RECT screenBounds = index < static_cast<int>(state.itemBounds.size())
+                                ? state.itemBounds[index]
+                                : RECT{};
+        MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&screenBounds), 2);
+        const auto& item = state.items[index];
+        const auto label = internal::ParseMenuLabel(item.text);
+        items.push_back({label.text,
+                         screenBounds,
+                         index + 1,
+                         item.enabled,
+                         false,
+                         !item.children.empty(),
+                         IsRectEmpty(&screenBounds) != FALSE,
+                         state.popupOpen && state.active == index});
+    }
+    return items;
+}
+
+void SyncAccessibility(HWND window, MenuBarState& state) {
+    int focusedChild{};
+    auto items = AccessibleItems(window, state, focusedChild);
+    std::vector<bool> expanded;
+    expanded.reserve(items.size());
+    for (const auto& item : items) expanded.push_back(item.expanded);
+
+    if (!state.accessibilityRegistered) {
+        internal::RegisterMenuBarAccessibility(window, std::move(items));
+        state.accessibilityFocusedChild = focusedChild;
+        state.accessibilityExpanded = std::move(expanded);
+        state.accessibilityRegistered = true;
+        return;
+    }
+
+    const auto oldFocusedChild = state.accessibilityFocusedChild;
+    const auto oldExpanded = state.accessibilityExpanded;
+    internal::UpdateMenuBarAccessibility(window, std::move(items), focusedChild);
+    state.accessibilityFocusedChild = focusedChild;
+    state.accessibilityExpanded = std::move(expanded);
+    if (focusedChild > 0 && focusedChild != oldFocusedChild)
+        internal::NotifyAccessibility(window, EVENT_OBJECT_FOCUS, focusedChild);
+    for (size_t index = 0; index < state.accessibilityExpanded.size(); ++index) {
+        const bool wasExpanded = index < oldExpanded.size() && oldExpanded[index];
+        if (wasExpanded != state.accessibilityExpanded[index])
+            internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE,
+                                          static_cast<LONG>(index + 1));
+    }
 }
 
 void Layout(HWND window, MenuBarState& state) {
@@ -81,6 +141,7 @@ void Layout(HWND window, MenuBarState& state) {
     if (state.hot >= static_cast<int>(state.itemBounds.size())) state.hot = -1;
     if (state.active >= static_cast<int>(state.itemBounds.size())) state.active = -1;
     InvalidateRect(window, nullptr, FALSE);
+    SyncAccessibility(window, state);
 }
 
 int HitTest(const MenuBarState& state, POINT point) {
@@ -109,6 +170,7 @@ void CancelMenuMode(HWND bar) {
     state->active = -1;
     SendMessageW(bar, WM_CHANGEUISTATE, MAKEWPARAM(UIS_SET, UISF_HIDEACCEL), 0);
     if (IsWindow(savedFocus)) SetFocus(savedFocus);
+    SyncAccessibility(bar, *state);
     if (changed) InvalidateRect(bar, nullptr, FALSE);
 }
 
@@ -126,6 +188,7 @@ bool BeginMenuMode(HWND bar, int index) {
     }
     state->active = index;
     SetFocus(bar);
+    SyncAccessibility(bar, *state);
     InvalidateRect(bar, nullptr, FALSE);
     return true;
 }
@@ -138,6 +201,7 @@ void RunMenuMode(HWND bar, int index) {
         const auto& item = state->items[next];
         if (!item.enabled) break;
         state->active = next;
+        SyncAccessibility(bar, *state);
         if (item.children.empty()) {
             const auto parent = GetParent(bar);
             const auto id = item.id;
@@ -153,6 +217,7 @@ void RunMenuMode(HWND bar, int index) {
         const auto appearance = state->menuAppearance;
         const auto parent = GetParent(bar);
         state->popupOpen = true;
+        SyncAccessibility(bar, *state);
         InvalidateRect(bar, nullptr, FALSE);
         const auto result = internal::ShowMenuBarPopup(
             parent ? parent : nullptr, bar, anchor, std::move(children), appearance, bar, next);
@@ -160,6 +225,7 @@ void RunMenuMode(HWND bar, int index) {
         state = State(bar);
         if (!state) return;
         state->popupOpen = false;
+        SyncAccessibility(bar, *state);
         next = result.nextTopIndex;
     }
     if (IsWindow(bar)) CancelMenuMode(bar);
@@ -415,6 +481,7 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
                 state->items, state->active, wParam == VK_LEFT ? -1 : 1);
             if (next >= 0 && next != state->active) {
                 state->active = next;
+                SyncAccessibility(window, *state);
                 InvalidateRect(window, nullptr, FALSE);
             }
         } else if (wParam == VK_DOWN || wParam == VK_RETURN || wParam == VK_SPACE) {
@@ -501,6 +568,7 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
             if (state->popupOpen) internal::CancelPopupMenu(window);
             else CancelMenuMode(window);
         }
+        if (state) SyncAccessibility(window, *state);
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     case WM_SHOWWINDOW:
@@ -508,16 +576,25 @@ LRESULT MenuBarProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
             if (state->popupOpen) internal::CancelPopupMenu(window);
             else CancelMenuMode(window);
         }
+        if (state) SyncAccessibility(window, *state);
         return DefWindowProcW(window, message, wParam, lParam);
     case internal::MenuBarSetItemsMessage:
-        if (!state || !lParam) return FALSE;
-        if (state->menuMode && !state->popupOpen) CancelMenuMode(window);
-        state->items = *reinterpret_cast<const std::vector<MenuItem>*>(lParam);
-        state->hot = -1;
-        state->active = -1;
-        state->pressed = false;
-        Layout(window, *state);
-        return TRUE;
+        if (lParam) {
+            if (!state) return FALSE;
+            if (state->menuMode && !state->popupOpen) CancelMenuMode(window);
+            state->items = *reinterpret_cast<const std::vector<MenuItem>*>(lParam);
+            state->hot = -1;
+            state->active = -1;
+            state->pressed = false;
+            Layout(window, *state);
+            return TRUE;
+        }
+        if (state) {
+            const auto child = static_cast<int>(wParam);
+            if (child >= 1 && child <= static_cast<int>(state->items.size()))
+                Activate(window, *state, child - 1);
+        }
+        return 0;
     case internal::MenuBarHitTestMessage:
         return state && lParam
                    ? HitTest(*state, *reinterpret_cast<const POINT*>(lParam))
@@ -569,6 +646,9 @@ HWND Create(const MenuBarOptions& options) {
     }
     if (window) EnumChildWindows(options.parent, InstallChildSubclass,
                                  reinterpret_cast<LPARAM>(window));
+    if (window) {
+        if (auto* state = State(window)) SyncAccessibility(window, *state);
+    }
     return window;
 }
 
