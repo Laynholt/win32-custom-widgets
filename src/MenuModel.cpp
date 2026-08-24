@@ -1,6 +1,7 @@
 #include "MenuModel.h"
 
 #include <algorithm>
+#include <cwctype>
 
 namespace wcw::internal {
 namespace {
@@ -24,6 +25,26 @@ SIZE FitPopup(SIZE popup, RECT workArea) {
 
 } // namespace
 
+MenuLabel ParseMenuLabel(std::wstring_view value) {
+    MenuLabel label;
+    for (size_t index = 0; index < value.size(); ++index) {
+        if (value[index] != L'&') {
+            label.text += value[index];
+            continue;
+        }
+        if (index + 1 == value.size()) {
+            if (!label.text.empty()) label.text += L'&';
+        } else if (value[index + 1] == L'&') {
+            label.text += L'&';
+            ++index;
+        } else {
+            if (!label.mnemonic) label.mnemonic = std::towlower(value[index + 1]);
+            else label.text += L'&';
+        }
+    }
+    return label;
+}
+
 bool ValidMenuItems(std::span<const MenuItem> items) {
     if (items.empty()) return false;
     for (const auto& item : items) {
@@ -36,6 +57,13 @@ bool ValidMenuItems(std::span<const MenuItem> items) {
         }
     }
     return true;
+}
+
+bool ValidMenuBarItems(std::span<const MenuItem> items) {
+    if (items.empty() || !ValidMenuItems(items)) return false;
+    return std::ranges::all_of(items, [](const MenuItem& item) {
+        return !item.separator && !ParseMenuLabel(item.text).text.empty();
+    });
 }
 
 int NextMenuIndex(std::span<const MenuItem> items, int current, int direction) {

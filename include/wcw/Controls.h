@@ -117,6 +117,11 @@ struct MenuButtonOptions : ButtonOptions {
     StyleOverride menuAppearance;
 };
 
+struct MenuBarOptions : ControlOptions {
+    std::vector<MenuItem> items;
+    StyleOverride menuAppearance;
+};
+
 struct ComboItem {
     std::wstring text;
     std::intptr_t id{};
@@ -174,6 +179,8 @@ HWND CreateButton(const ButtonOptions& options);
 bool ShowContextMenu(HWND owner, POINT screenPosition, const ContextMenuOptions& options);
 HWND CreateMenuButton(const MenuButtonOptions& options);
 bool SetMenuItems(HWND menuButton, const std::vector<MenuItem>& items);
+HWND CreateMenuBar(const MenuBarOptions& options);
+bool SetMenuBarItems(HWND menuBar, const std::vector<MenuItem>& items);
 HWND CreateLabel(const ControlOptions& options);
 HWND CreateImageView(const ControlOptions& options, ImageSource source,
                      ImageMode mode = ImageMode::Contain);
