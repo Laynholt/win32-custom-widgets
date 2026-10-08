@@ -1,5 +1,7 @@
 .worktrees/
 .superpowers/
+.codebase-memory/
+.codegraph/
 build/
 build-*/
 CMakeUserPresets.json
