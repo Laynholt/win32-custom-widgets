@@ -134,6 +134,18 @@ struct ComboBoxOptions : ControlOptions {
     float popupHeightDip{240};
 };
 
+struct TabItem {
+    std::wstring text;
+    std::intptr_t id{};
+};
+
+// A tab strip. The parent handles WCN_SELECTION_CHANGED to show/hide page HWNDs
+// or repaint its own content. Items must be nonempty; the initial index is clamped.
+struct TabControlOptions : ControlOptions {
+    std::vector<TabItem> items;
+    int selectedIndex{};
+};
+
 struct ScrollExtentDip {
     float width{};
     float height{};
@@ -208,6 +220,10 @@ HWND CreateComboBox(const ComboBoxOptions& options);
 bool SetComboItems(HWND comboBox, const std::vector<ComboItem>& items);
 bool SetComboSelection(HWND comboBox, int index);
 int GetComboSelection(HWND comboBox);
+HWND CreateTabControl(const TabControlOptions& options);
+// Notifies synchronously on a change; selecting the current tab is a no-op.
+bool SetTabSelection(HWND tabControl, int index);
+int GetTabSelection(HWND tabControl);
 HWND CreateScrollView(const ScrollViewOptions& options);
 bool SetScrollContentExtent(HWND scrollView, ScrollExtentDip extent);
 bool SetScrollOffset(HWND scrollView, ScrollOffsetDip offset);

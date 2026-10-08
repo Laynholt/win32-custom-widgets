@@ -35,6 +35,7 @@ enum Id {
     Slider,
     Combo,
     Numeric,
+    Tabs,
 };
 enum : int {
     MenuOpen = 3001,
@@ -50,7 +51,8 @@ enum : int {
 struct Gallery {
     HWND window{}, menuBar{}, dark{}, light{}, accent{}, disabled{}, iconButton{}, menuButton{}, label{},
         informationIcon{}, warningIcon{}, errorIcon{}, separator{}, panel{}, text{}, numeric{},
-        checkbox{}, toggle{}, slider{}, radius{}, progress{}, activity{}, combo{}, scroll{}, status{};
+        checkbox{}, toggle{}, slider{}, radius{}, progress{}, activity{}, combo{}, scroll{}, status{},
+        tabs{}, details{};
     float radiusDip{DefaultRadiusDip};
     bool lightTheme{};
     std::vector<HWND> rounded;
@@ -187,8 +189,10 @@ void Layout(Gallery& g) {
     MoveWindowDip(g.warningIcon, right + column - 184, headerTop + 2, 24, 24);
     MoveWindowDip(g.errorIcon, right + column - 154, headerTop + 2, 24, 24);
     MoveWindowDip(g.menuButton, right + column - 120, headerTop - 4, 120, 36);
-    MoveWindowDip(g.scroll, right, scrollTop, column,
-                  (std::max)(120.0f, height - scrollTop - 62));
+    MoveWindowDip(g.tabs, right, scrollTop, column, 40);
+    for (const auto page : {g.scroll, g.details})
+        MoveWindowDip(page, right, scrollTop + 48, column,
+                      (std::max)(120.0f, height - scrollTop - 110));
     MoveWindowDip(g.status, margin, height - 40, width - margin * 2, 28);
     for (const auto& [window, bounds] : g.nested)
         MoveWindowDip(window, bounds.x, bounds.y, bounds.width, bounds.height);
@@ -281,6 +285,10 @@ bool CreateGallery(Gallery& g) {
     combo.selectedIndex = 0;
     g.combo = wcw::CreateComboBox(combo);
 
+    wcw::TabControlOptions tabs{Base(g.window, Tabs, L"", L"Example pages")};
+    tabs.items = {{L"Widgets", 1}, {L"Settings", 2}};
+    g.tabs = wcw::CreateTabControl(tabs);
+
     wcw::ScrollViewOptions scroll{Base(g.window, 0, L"", L"Scrollable widget examples")};
     scroll.contentExtent = {620, 520};
     scroll.trackAppearance.background = wcw::Color::FromRgb(0x24, 0x24, 0x29);
@@ -306,6 +314,23 @@ bool CreateGallery(Gallery& g) {
         g.nested.emplace_back(wcw::CreateLabel(item), item.bounds);
     }
 
+    wcw::ScrollViewOptions details{Base(g.window, 0, L"", L"Settings page")};
+    details.style = 0; // Create once; hide inactive pages so their input and scroll state survive.
+    details.contentExtent = {380, 210};
+    g.details = wcw::CreateScrollView(details);
+    const auto detailsContent = wcw::GetScrollContentWindow(g.details);
+    if (!detailsContent) return false;
+    auto hint = Base(detailsContent, 0, L"Switch tabs: your changes stay here.");
+    hint.bounds = {18, 18, 340, 36};
+    g.nested.emplace_back(wcw::CreateLabel(hint), hint.bounds);
+    wcw::TextBoxOptions pageText{Base(detailsContent, 0, L"", L"Saved page input")};
+    pageText.bounds = {18, 70, 300, 38};
+    pageText.placeholder = L"Type here, then switch tabs";
+    g.nested.emplace_back(wcw::CreateTextBox(pageText), pageText.bounds);
+    wcw::CheckableOptions pageCheck{Base(detailsContent, 0, L"Keep this setting")};
+    pageCheck.bounds = {18, 126, 300, 36};
+    g.nested.emplace_back(wcw::CreateCheckbox(pageCheck), pageCheck.bounds);
+
     g.status = wcw::CreateLabel(Base(g.window, 0, L"Ready", L"Notification status"));
     wcw::TooltipOptions tooltip;
     tooltip.text = L"Tooltips are custom drawn and follow the active theme.";
@@ -318,7 +343,7 @@ bool CreateGallery(Gallery& g) {
     return std::ranges::all_of(g.rounded, [](HWND window) { return window != nullptr; }) &&
            g.menuBar && g.accent && g.disabled && g.iconButton && g.menuButton && g.label &&
            g.informationIcon && g.warningIcon && g.errorIcon && g.separator && g.panel && g.slider &&
-           g.radius && g.progress && g.activity && g.scroll && g.status &&
+           g.radius && g.progress && g.activity && g.scroll && g.status && g.tabs && g.details &&
            std::ranges::all_of(g.nested, [](const auto& item) { return item.first != nullptr; }) &&
            iconTooltip && sliderTooltip;
 }
@@ -432,8 +457,16 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                 SetStatus(*gallery, note->checked ? L"Checked" : L"Unchecked");
             } else if (header->code == wcw::WCN_SELECTION_CHANGED) {
                 const auto note = reinterpret_cast<const wcw::SelectionChangedNotification*>(lParam);
-                SetStatus(*gallery, std::format(L"Combo selection {} (item id {})",
-                                                note->newIndex, note->newId));
+                if (header->hwndFrom == gallery->tabs) {
+                    const auto hidden = note->newIndex == 0 ? gallery->details : gallery->scroll;
+                    if (GetFocus() == hidden || IsChild(hidden, GetFocus())) SetFocus(gallery->tabs);
+                    ShowWindow(gallery->scroll, note->newIndex == 0 ? SW_SHOWNA : SW_HIDE);
+                    ShowWindow(gallery->details, note->newIndex == 1 ? SW_SHOWNA : SW_HIDE);
+                    SetStatus(*gallery, note->newIndex == 0 ? L"Widgets page" : L"Settings page");
+                } else {
+                    SetStatus(*gallery, std::format(L"Combo selection {} (item id {})",
+                                                    note->newIndex, note->newId));
+                }
             }
         }
         return 0;

@@ -6,7 +6,7 @@ add_library(Win32CustomWidgets STATIC src/Theme.cpp src/Style.cpp src/Geometry.c
                                       src/TextBox.cpp src/NumericModel.cpp src/NumericBox.cpp
                                       src/BooleanControl.cpp src/Slider.cpp src/ProgressBar.cpp
                                       src/ComboModel.cpp src/ComboBox.cpp src/ScrollModel.cpp
-                                      src/ScrollView.cpp src/Tooltip.cpp src/MenuModel.cpp src/Menu.cpp
+                                      src/ScrollView.cpp src/TabControl.cpp src/Tooltip.cpp src/MenuModel.cpp src/Menu.cpp
                                       src/MenuBar.cpp)
 add_library(Win32CustomWidgets::Win32CustomWidgets ALIAS Win32CustomWidgets)
 target_include_directories(Win32CustomWidgets PUBLIC
@@ -46,6 +46,7 @@ wcw_add_test(TooltipTests tests/test_tooltip.cpp)
 wcw_add_test(AccessibilityTests tests/test_accessibility.cpp)
 wcw_add_test(MenuTests tests/test_menu.cpp)
 wcw_add_test(MenuBarTests tests/test_menu_bar.cpp)
+wcw_add_test(TabControlTests tests/test_tab_control.cpp)
 
 add_test(NAME ConsumerSmoke
     COMMAND ${CMAKE_CTEST_COMMAND}

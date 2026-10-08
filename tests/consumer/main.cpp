@@ -36,8 +36,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.text = L"Smoke";
     const auto button = parent ? wcw::CreateButton(options) : nullptr;
 
+    wcw::TabControlOptions tabOptions;
+    tabOptions.parent = parent;
+    tabOptions.bounds = {0, 28, 200, 40};
+    tabOptions.items = {{L"First", 1}, {L"Second", 2}};
+    const auto tabs = parent ? wcw::CreateTabControl(tabOptions) : nullptr;
+    const bool tabsWork = tabs && wcw::SetTabSelection(tabs, 1) &&
+                          wcw::GetTabSelection(tabs) == 1;
+
     if (button) DestroyWindow(button);
     if (parent) DestroyWindow(parent);
     wcw::Shutdown();
-    return button ? 0 : 3;
+    return button && tabsWork ? 0 : 3;
 }
