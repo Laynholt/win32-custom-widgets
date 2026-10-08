@@ -2,8 +2,10 @@
 
 #include "../src/Internal.h"
 #include "../src/MenuModel.h"
+#include "../src/Paint.h"
 
 #include <wcw/Controls.h>
+#include <wcw/Geometry.h>
 #include <wcw/Runtime.h>
 
 #include <windows.h>
@@ -354,6 +356,58 @@ void CALLBACK CapturePopup(HWND owner, UINT, UINT_PTR timer, DWORD) {
     SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
 }
 
+void CALLBACK CheckMenuLabelRendering(HWND owner, UINT, UINT_PTR timer, DWORD) {
+    KillTimer(owner, timer);
+    const auto popup = Popup();
+    CHECK(popup != nullptr);
+    if (!popup) return;
+    CHECK(GetWindowRect(popup, &capturedPopup));
+    RECT client{};
+    CHECK(GetClientRect(popup, &client));
+    const auto screen = GetDC(popup);
+    const auto actual = CreateCompatibleDC(screen);
+    const auto expected = CreateCompatibleDC(screen);
+    const auto actualBitmap = CreateCompatibleBitmap(screen, client.right, client.bottom);
+    const auto expectedBitmap = CreateCompatibleBitmap(screen, client.right, client.bottom);
+    const auto oldActual = SelectObject(actual, actualBitmap);
+    const auto oldExpected = SelectObject(expected, expectedBitmap);
+    CHECK(PrintWindow(popup, actual, PW_CLIENTONLY));
+    CHECK(PatBlt(expected, 0, 0, client.right, client.bottom, WHITENESS));
+    const auto dpi = wcw::paint::Dpi(popup);
+    const auto font = wcw::paint::Font(wcw::GetTheme().body, dpi);
+    const auto oldFont = SelectObject(expected, font);
+    SetBkMode(expected, TRANSPARENT);
+    SetTextColor(expected, RGB(0, 0, 0));
+    auto* accessible = PopupAccessible(popup);
+    if (accessible) {
+        const std::array labels{L"&Undo the latest operation", L"Save && Close", L"&Unavailable"};
+        for (int row = 0; row < static_cast<int>(labels.size()); ++row) {
+            long left{}, top{}, width{}, height{};
+            CHECK(accessible->accLocation(&left, &top, &width, &height, Child(row + 1)) == S_OK);
+            RECT text{wcw::DipToPx(20, dpi), top - capturedPopup.top, client.right,
+                      top - capturedPopup.top + height};
+            auto drawBounds = text;
+            DrawTextW(expected, labels[row], -1, &drawBounds,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            bool same = true;
+            for (int y = text.top; y < text.bottom; ++y)
+                for (int x = text.left; x < text.right; ++x)
+                    same = same && GetPixel(actual, x, y) == GetPixel(expected, x, y);
+            CHECK(same);
+        }
+        accessible->Release();
+    }
+    SelectObject(expected, oldFont);
+    SelectObject(actual, oldActual);
+    SelectObject(expected, oldExpected);
+    DeleteObject(actualBitmap);
+    DeleteObject(expectedBitmap);
+    DeleteDC(actual);
+    DeleteDC(expected);
+    ReleaseDC(popup, screen);
+    SendMessageW(popup, WM_KEYDOWN, VK_ESCAPE, 0);
+}
+
 void CALLBACK SelectFirst(HWND owner, UINT, UINT_PTR timer, DWORD) {
     KillTimer(owner, timer);
     SelectFirstPopup();
@@ -663,6 +717,32 @@ int main() {
                                          GetCurrentThreadId());
     CHECK(pointerQueueHook != nullptr);
     CHECK(wcw::Initialize(instance));
+
+    const auto savedTheme = wcw::GetTheme();
+    auto textTheme = savedTheme;
+    textTheme.palette.panel = textTheme.palette.input = wcw::Color::FromRgb(255, 255, 255);
+    textTheme.palette.text = textTheme.palette.disabledText = wcw::Color::FromRgb(0, 0, 0);
+    textTheme.metrics.paddingXDip = textTheme.metrics.paddingYDip = 0;
+    textTheme.metrics.spacingDip = textTheme.metrics.borderWidthDip = 0;
+    textTheme.metrics.cornerRadiusDip = 0;
+    wcw::SetTheme(textTheme);
+    const wcw::ContextMenuOptions mnemonicMenu{{
+        {.id = 1, .text = L"&Undo the latest operation"},
+        {.id = 2, .text = L"Save && Close"},
+        {.text = L"&Unavailable", .enabled = false},
+    }};
+    SetTimer(parent, 40, 1, CheckMenuLabelRendering);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, mnemonicMenu));
+    const auto mnemonicWidth = capturedPopup.right - capturedPopup.left;
+    const wcw::ContextMenuOptions plainMenu{{
+        {.id = 1, .text = L"Undo the latest operation"},
+        {.id = 2, .text = L"Save & Close"},
+        {.text = L"Unavailable", .enabled = false},
+    }};
+    SetTimer(parent, 40, 1, CapturePopup);
+    CHECK(wcw::ShowContextMenu(parent, {20, 20}, plainMenu));
+    CHECK(capturedPopup.right - capturedPopup.left == mnemonicWidth);
+    wcw::SetTheme(savedTheme);
 
     menuButtonId = 300;
     wcw::MenuButtonOptions menuButtonOptions;

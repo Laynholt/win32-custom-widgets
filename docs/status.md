@@ -38,6 +38,9 @@ in a clean `build-github-check` directory with the `Visual Studio 18 2026` x64 g
 - The new API test initially failed to compile against the missing interfaces, then exposed the
   previous short-label padding behavior before that behavior was corrected.
 - The gallery contains all 16 public `Create*` APIs, plus tooltip and context-menu examples.
+- Popup mnemonic rendering is checked against native `DrawTextW`: single `&` marks an
+  underlined character, `&&` displays a literal ampersand, and disabled rows behave consistently.
+  A regression test also checks that mnemonic markers do not increase popup width.
 
 Run GUI tests sequentially with the gallery closed: existing tests locate windows by class name
 and can interfere across processes. An initial Release run found two tooltip assertion failures
@@ -46,14 +49,17 @@ the full Release suite passed; no production change was needed for that interfer
 
 ## Visual verification and remaining checks
 
-User-provided dark-theme screenshots of the Widgets and Settings tabs were inspected. Selected
-buttons and tabs, captions, and icon spacing show no obvious clipping at the supplied window
-size. The Widgets screenshot is included in README.
+User-provided dark- and light-theme screenshots of the Widgets and Settings tabs were inspected.
+Selected buttons and tabs, captions, and icon spacing show no obvious clipping at the supplied
+window size. The dark Widgets screenshot is included in README. Light-theme screenshots also
+show an open menu and a submenu placed to its left near the screen edge. A dark-menu screenshot
+exposed literal mnemonic markers (`&Undo`); popup label painting and width measurement were fixed
+and covered by the regression test above.
 
 Computer Use obtained the gallery accessibility tree, but its screenshot request timed out.
 The user then stopped Computer Use with Escape; no further UI automation was performed.
 
-The full manual gallery matrix remains unverified: Light theme, radius 0 and 24 DIP, physical
+The full manual gallery matrix remains unverified: radius 0 and 24 DIP, physical
 100%/150% DPI and monitor transitions, keyboard-only traversal, hover/pressed/focus states,
 popup interaction and placement, tooltip timing, and flicker. Automated tests cover many of
 these behaviors, but the supplied screenshots do not establish the complete visual matrix.
@@ -67,3 +73,9 @@ Tracked historical files were removed with Git; remaining local Superpowers sess
 ignored and are not part of the published tree. Historical tracked files remain in Git history.
 No Git remote is configured in this checkout. Configure the intended GitHub repository before
 pushing; no upload has been performed.
+
+The local `Build` directory contains the latest Release library and gallery, built with tests
+disabled. After the passing Debug and Release runs, old builds and their generated test results
+were moved outside the repository to the sibling `win32-custom-widgets-build-backup-20261008`
+directory because automatic approval review blocked recursive deletion. They can be deleted
+manually. Test sources remain in the repository.

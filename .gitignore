@@ -3,6 +3,7 @@
 .codebase-memory/
 .codegraph/
 build/
+Build/
 build-*/
 CMakeUserPresets.json
 .vs/

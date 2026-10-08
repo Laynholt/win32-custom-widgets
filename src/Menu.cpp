@@ -85,7 +85,8 @@ Layout MeasureLayout(HWND window, const std::vector<MenuItem>& items,
     const auto font = paint::Font(style.font, dpi);
     for (const auto& item : items) {
         if (item.separator) continue;
-        result.labelWidth = (std::max)(result.labelWidth, TextWidth(dc, font, item.text));
+        result.labelWidth = (std::max)(result.labelWidth,
+                                      TextWidth(dc, font, internal::ParseMenuLabel(item.text).text));
         result.shortcutWidth = (std::max)(result.shortcutWidth,
                                           TextWidth(dc, font, item.shortcut));
     }
@@ -719,7 +720,7 @@ void PopupController::Paint(HWND window) {
                                                   (std::max)(0, afterChevron - shortcutBlock));
                 RECT labelBounds{x, rowBounds.top, x + labelWidth, rowBounds.bottom};
                 paint::Text(buffer.dc(), item.text, labelBounds, font, textColor,
-                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                 x += labelWidth;
                 if (shortcutWidth) {
                     x += layout.spacing;

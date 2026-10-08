@@ -290,16 +290,16 @@ Requires Windows 10 or later, MSVC with C++20 support, the Windows SDK, and CMak
 Use a fresh build directory when changing the Visual Studio version.
 
 ```powershell
-cmake -S . -B build -A x64
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
-.\build\bin\Debug\Win32CustomWidgetsDemo.exe
+cmake -S . -B Build -A x64 -DBUILD_TESTING=ON
+cmake --build Build --config Debug
+ctest --test-dir Build -C Debug --output-on-failure
+.\Build\bin\Debug\Win32CustomWidgetsDemo.exe
 ```
 
 ```powershell
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
-.\build\bin\Release\Win32CustomWidgetsDemo.exe
+cmake --build Build --config Release
+ctest --test-dir Build -C Release --output-on-failure
+.\Build\bin\Release\Win32CustomWidgetsDemo.exe
 ```
 
 Run GUI suites sequentially with the gallery closed. Tests cover painting, control input/state, ranges and parsing,
