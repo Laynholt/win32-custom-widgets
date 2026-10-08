@@ -308,7 +308,9 @@ menus, accessibility, public API validation, and a separate `add_subdirectory` c
 Use `-DWCW_BUILD_DEMO=OFF` for a library-and-tests top-level build or `-DBUILD_TESTING=OFF` for a
 library-and-demo build without tests.
 
-See [implementation status](docs/status.md) for the plan audit and remaining verification.
+Debug and Release suites passed all 15 tests with MSVC 19.51 and Windows SDK 10.0.26100.0.
+Dark and Light gallery screenshots were inspected; physical DPI/monitor transitions and the
+complete manual matrix of keyboard, popup, tooltip, and visual states remain unverified.
 
 ## Current non-goals
 
