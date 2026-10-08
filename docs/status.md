@@ -74,7 +74,7 @@ ignored and are not part of the published tree. Historical tracked files remain 
 No Git remote is configured in this checkout. Configure the intended GitHub repository before
 pushing; no upload has been performed.
 
-The local `Build` directory contains the latest Release library and gallery, built with tests
+The local `build` directory contains the latest Release library and gallery, built with tests
 disabled. After the passing Debug and Release runs, old builds and their generated test results
 were moved outside the repository to the sibling `win32-custom-widgets-build-backup-20261008`
 directory because automatic approval review blocked recursive deletion. They can be deleted
