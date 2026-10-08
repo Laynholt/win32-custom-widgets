@@ -30,6 +30,7 @@ struct ButtonOptions : ControlOptions {
     bool isDefault{};
     // Uses the conventional IDCANCEL control ID so a dialog parent routes Escape to it.
     bool isCancel{};
+    bool checked{};
 };
 
 struct TextBoxOptions : ControlOptions {
@@ -185,6 +186,25 @@ struct SelectionChangedNotification {
     std::intptr_t newId;
 };
 
+// Use only with a valid WM_NOTIFY payload; the returned pointer lives for that message.
+inline const ValueChangedNotification* DecodeValueChangedNotification(LPARAM payload, HWND source) {
+    const auto* header = reinterpret_cast<const NMHDR*>(payload);
+    return header && source && header->hwndFrom == source && header->code == WCN_VALUE_CHANGED
+        ? reinterpret_cast<const ValueChangedNotification*>(payload) : nullptr;
+}
+
+inline const CheckChangedNotification* DecodeCheckChangedNotification(LPARAM payload, HWND source) {
+    const auto* header = reinterpret_cast<const NMHDR*>(payload);
+    return header && source && header->hwndFrom == source && header->code == WCN_CHECK_CHANGED
+        ? reinterpret_cast<const CheckChangedNotification*>(payload) : nullptr;
+}
+
+inline const SelectionChangedNotification* DecodeSelectionChangedNotification(LPARAM payload, HWND source) {
+    const auto* header = reinterpret_cast<const NMHDR*>(payload);
+    return header && source && header->hwndFrom == source && header->code == WCN_SELECTION_CHANGED
+        ? reinterpret_cast<const SelectionChangedNotification*>(payload) : nullptr;
+}
+
 enum class ImageMode { Contain, Cover, Stretch };
 
 HWND CreateButton(const ButtonOptions& options);
@@ -194,6 +214,7 @@ bool SetMenuItems(HWND menuButton, const std::vector<MenuItem>& items);
 HWND CreateMenuBar(const MenuBarOptions& options);
 bool SetMenuBarItems(HWND menuBar, const std::vector<MenuItem>& items);
 HWND CreateLabel(const ControlOptions& options);
+HWND CreateLabel(const ControlOptions& options, UINT alignment);
 HWND CreateImageView(const ControlOptions& options, ImageSource source,
                      ImageMode mode = ImageMode::Contain);
 HWND CreateSeparator(const ControlOptions& options, bool vertical = false);
@@ -209,6 +230,7 @@ HWND CreateCheckbox(const CheckableOptions& options);
 HWND CreateToggle(const CheckableOptions& options);
 bool SetChecked(HWND control, bool checked);
 bool GetChecked(HWND control);
+bool SetAccessibleName(HWND control, const std::wstring& name);
 HWND CreateSlider(const SliderOptions& options);
 bool SetSliderValue(HWND slider, double value);
 std::optional<double> GetSliderValue(HWND slider);

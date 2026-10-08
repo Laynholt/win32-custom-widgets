@@ -108,6 +108,7 @@ inline constexpr UINT ButtonGetMenuStateMessage = WM_APP + 0x58A;
 inline constexpr UINT MenuBarSetItemsMessage = WM_APP + 0x58B;
 inline constexpr UINT MenuBarHitTestMessage = WM_APP + 0x58C;
 inline constexpr UINT MenuBarNextItemMessage = WM_APP + 0x58D;
+inline constexpr UINT SetAccessibleNameMessage = WM_APP + 0x58E;
 
 HWND CreateNumericBoxWindow(const NumericBoxOptions& options);
 bool IsTextBoxWindow(HWND window, bool numericOnly = false);

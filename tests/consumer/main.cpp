@@ -34,7 +34,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     options.id = 1;
     options.bounds = {0, 0, 80, 24};
     options.text = L"Smoke";
+    options.checked = true;
     const auto button = parent ? wcw::CreateButton(options) : nullptr;
+    const bool buttonWorks = button && wcw::GetChecked(button) &&
+        wcw::SetChecked(button, false) && !wcw::GetChecked(button) &&
+        wcw::SetAccessibleName(button, L"Consumer button");
+    const auto label = parent ? wcw::CreateLabel(options, DT_CENTER) : nullptr;
 
     wcw::TabControlOptions tabOptions;
     tabOptions.parent = parent;
@@ -47,5 +52,5 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (button) DestroyWindow(button);
     if (parent) DestroyWindow(parent);
     wcw::Shutdown();
-    return button && tabsWork ? 0 : 3;
+    return buttonWorks && label && tabsWork ? 0 : 3;
 }

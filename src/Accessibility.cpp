@@ -3,6 +3,7 @@
 #include "Internal.h"
 
 #include <oleacc.h>
+#include <commctrl.h>
 
 #include <algorithm>
 #include <atomic>
@@ -53,6 +54,8 @@ public:
         info_.menuItems = std::move(items);
         info_.focusedChild = focusedChild;
     }
+
+    void SetName(std::wstring name) { info_.name = std::move(name); }
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** value) override {
         if (!value) return E_POINTER;
@@ -243,7 +246,8 @@ public:
             info_.kind == AccessibleKind::ComboBox || info_.kind == AccessibleKind::ScrollView ||
             info_.kind == AccessibleKind::MenuBar)
             flags |= STATE_SYSTEM_FOCUSABLE;
-        if ((info_.kind == AccessibleKind::Checkbox || info_.kind == AccessibleKind::Toggle) &&
+        if ((info_.kind == AccessibleKind::Button || info_.kind == AccessibleKind::Checkbox ||
+             info_.kind == AccessibleKind::Toggle) &&
             GetChecked(window_))
             flags |= STATE_SYSTEM_CHECKED;
         if (info_.kind == AccessibleKind::Button &&
@@ -546,6 +550,21 @@ void UpdateMenuBarAccessibility(HWND window, std::vector<AccessibleMenuItem> ite
 
 bool HandleAccessibilityMessage(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
                                 LRESULT& result) {
+    if (message == SetAccessibleNameMessage) {
+        result = FALSE;
+        const auto found = Entries().find(window);
+        if (found != Entries().end() && lParam) {
+            const auto& name = *reinterpret_cast<const std::wstring*>(lParam);
+            if (found->second.info.name != name) {
+                auto replacement = name;
+                if (found->second.object) found->second.object->SetName(name);
+                found->second.info.name = std::move(replacement);
+                NotifyAccessibility(window, EVENT_OBJECT_NAMECHANGE);
+            }
+            result = TRUE;
+        }
+        return true;
+    }
     if (message != WM_GETOBJECT || static_cast<LONG>(lParam) != OBJID_CLIENT) return false;
     const auto found = Entries().find(window);
     if (found == Entries().end()) return false;
@@ -586,3 +605,17 @@ void NotifyAccessibilityFocus(HWND window, bool fromChild) {
 }
 
 } // namespace wcw::internal
+
+namespace wcw {
+bool SetAccessibleName(HWND control, const std::wstring& name) {
+    if (!internal::IsLibraryWindow(control)) return false;
+    wchar_t className[32]{};
+    if (GetClassNameW(control, className, 32) && lstrcmpW(className, WC_TABCONTROLW) == 0) {
+        if (!SetWindowTextW(control, name.c_str())) return false;
+        internal::NotifyAccessibility(control, EVENT_OBJECT_NAMECHANGE);
+        return true;
+    }
+    return SendMessageW(control, internal::SetAccessibleNameMessage, 0,
+                        reinterpret_cast<LPARAM>(&name)) != FALSE;
+}
+} // namespace wcw

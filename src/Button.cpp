@@ -29,6 +29,7 @@ struct ButtonState {
     std::vector<MenuItem> menuItems;
     StyleOverride menuAppearance;
     bool menuOpen{};
+    bool checked{};
 };
 
 bool Inside(HWND window, LPARAM position) {
@@ -90,6 +91,7 @@ void PaintButton(HWND window, ButtonState& state) {
         const auto background = !enabled ? style.disabledSurface
                               : (state.mousePressed || state.keyboardPressedKey) ? style.pressed
                               : state.hover   ? style.hover
+                              : state.checked ? style.selected
                                               : style.background;
         paint::Clear(buffer.dc(), bounds, theme.palette.window);
         Gdiplus::Graphics graphics(buffer.dc());
@@ -221,6 +223,16 @@ LRESULT ButtonProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam) 
     case BM_CLICK:
         if (state) ActivateButton(window, *state);
         return 0;
+    case BM_SETCHECK:
+        if (!state || (wParam != BST_UNCHECKED && wParam != BST_CHECKED)) return FALSE;
+        if (state->checked != (wParam == BST_CHECKED)) {
+            state->checked = wParam == BST_CHECKED;
+            InvalidateRect(window, nullptr, FALSE);
+            internal::NotifyAccessibility(window, EVENT_OBJECT_STATECHANGE);
+        }
+        return TRUE;
+    case BM_GETCHECK:
+        return state && state->checked ? BST_CHECKED : BST_UNCHECKED;
     case internal::ButtonGetPressedMessage:
         return state && (state->mousePressed || state->keyboardPressedKey);
     case internal::ButtonSetMenuItemsMessage:
@@ -272,6 +284,7 @@ HWND Create(const ButtonOptions& options, const MenuButtonOptions* menuOptions) 
     const int id = options.isCancel ? IDCANCEL : options.id;
     ButtonState state{options.icon, options.bitmap, options.iconSizeDip, options.alignment,
                       options.isDefault, options.isCancel};
+    state.checked = options.checked;
     if (menuOptions) {
         state.menuItems = menuOptions->items;
         state.menuAppearance = menuOptions->menuAppearance;

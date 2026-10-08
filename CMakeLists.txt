@@ -47,6 +47,7 @@ wcw_add_test(AccessibilityTests tests/test_accessibility.cpp)
 wcw_add_test(MenuTests tests/test_menu.cpp)
 wcw_add_test(MenuBarTests tests/test_menu_bar.cpp)
 wcw_add_test(TabControlTests tests/test_tab_control.cpp)
+wcw_add_test(ControlApiTests tests/test_control_api.cpp)
 
 add_test(NAME ConsumerSmoke
     COMMAND ${CMAKE_CTEST_COMMAND}

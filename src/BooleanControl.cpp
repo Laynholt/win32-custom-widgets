@@ -28,8 +28,15 @@ struct BooleanState {
     bool keyboardPressed{};
 };
 
-bool IsBooleanWindow(HWND window) {
-    return internal::IsLibraryWindow(window, BooleanClass);
+bool IsCheckableWindow(HWND window) {
+    if (!internal::IsLibraryWindow(window)) return false;
+    wchar_t name[32]{};
+    if (!GetClassNameW(window, name, 32) ||
+        (lstrcmpW(name, BooleanClass) != 0 && lstrcmpW(name, L"WcwButton") != 0)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return false;
+    }
+    return true;
 }
 
 bool Inside(HWND window, LPARAM position) {
@@ -209,9 +216,12 @@ LRESULT BooleanProcImpl(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     case internal::BooleanSetMessage:
+    case BM_SETCHECK:
+        if (message == BM_SETCHECK && wParam != BST_UNCHECKED && wParam != BST_CHECKED) return FALSE;
         if (state) SetValue(window, *state, wParam != 0, false);
         return state != nullptr;
     case internal::BooleanGetMessage:
+    case BM_GETCHECK:
         return state && state->checked;
     case WM_SETTEXT: {
         const auto result = DefWindowProcW(window, message, wParam, lParam);
@@ -256,13 +266,13 @@ HWND CreateToggle(const CheckableOptions& options) {
 }
 
 bool SetChecked(HWND control, bool checked) {
-    return IsBooleanWindow(control) &&
-           SendMessageW(control, internal::BooleanSetMessage, checked, 0) != FALSE;
+    return IsCheckableWindow(control) &&
+           SendMessageW(control, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0) != FALSE;
 }
 
 bool GetChecked(HWND control) {
-    return IsBooleanWindow(control) &&
-           SendMessageW(control, internal::BooleanGetMessage, 0, 0) != FALSE;
+    return IsCheckableWindow(control) &&
+           SendMessageW(control, BM_GETCHECK, 0, 0) == BST_CHECKED;
 }
 
 namespace internal {

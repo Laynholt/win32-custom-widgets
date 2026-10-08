@@ -21,6 +21,7 @@ struct DisplayState {
     ImageSource source{};
     ImageMode mode{};
     bool vertical{};
+    UINT alignment{DT_LEFT};
 };
 
 SIZE ImageSize(ImageSource source) {
@@ -69,11 +70,8 @@ RECT LabelTextBounds(HDC dc, RECT bounds, HFONT font, const ResolvedStyle& style
     const int measuredHeight = (std::max)(0, static_cast<int>(measured.bottom - measured.top));
     const int controlHeight = (std::max)(0, static_cast<int>(bounds.bottom - bounds.top));
     const int paddedHeight = (std::max)(0, controlHeight - paddingY * 2);
-    const bool fitsPadding = measuredHeight <= paddedHeight;
-    const int top = fitsPadding ? bounds.top + paddingY : bounds.top;
-    const int availableHeight = fitsPadding ? paddedHeight : controlHeight;
-    const int height = (std::min)(measuredHeight, availableHeight);
-    const int centeredTop = top + (availableHeight - height) / 2;
+    const int height = (std::min)(measuredHeight, paddedHeight);
+    const int centeredTop = bounds.top + paddingY + (paddedHeight - height) / 2;
     return {contentLeft, centeredTop, contentRight, centeredTop + height};
 }
 
@@ -114,7 +112,7 @@ void PaintDisplay(HWND window, const DisplayState& state) {
             const auto textBounds = LabelTextBounds(buffer.dc(), bounds, font, style, dpi, label);
             paint::Text(buffer.dc(), label, textBounds, font,
                         IsWindowEnabled(window) ? style.text : style.disabledText,
-                        DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
+                        state.alignment | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
         } else if (state.kind == DisplayKind::Image &&
                    (state.source.kind == ImageSource::Kind::Builtin || state.source.handle)) {
             const int diameter = DipToPx(style.cornerRadiusDip * 2, dpi);
@@ -207,7 +205,17 @@ HWND Create(const ControlOptions& options, DisplayState state) {
 } // namespace
 
 HWND CreateLabel(const ControlOptions& options) {
-    return Create(options, {DisplayKind::Label});
+    return CreateLabel(options, DT_LEFT);
+}
+
+HWND CreateLabel(const ControlOptions& options, UINT alignment) {
+    if (alignment != DT_LEFT && alignment != DT_CENTER && alignment != DT_RIGHT) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    DisplayState state{DisplayKind::Label};
+    state.alignment = alignment;
+    return Create(options, state);
 }
 
 HWND CreateImageView(const ControlOptions& options, ImageSource source, ImageMode mode) {

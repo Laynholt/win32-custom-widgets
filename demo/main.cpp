@@ -95,6 +95,7 @@ wcw::ControlOptions Base(HWND parent, int id, std::wstring text, std::wstring na
 
 void SetStatus(Gallery& gallery, const std::wstring& text) {
     SetWindowTextW(gallery.status, text.c_str());
+    wcw::SetAccessibleName(gallery.status, L"Status: " + text);
 }
 
 std::vector<wcw::MenuItem> ApplicationMenu(bool lightTheme) {
@@ -140,6 +141,8 @@ void ApplyAppearance(Gallery& gallery) {
     auto theme = gallery.lightTheme ? wcw::LightTheme() : wcw::DarkTheme();
     theme.metrics.cornerRadiusDip = gallery.radiusDip;
     wcw::SetTheme(theme);
+    wcw::SetChecked(gallery.dark, !gallery.lightTheme);
+    wcw::SetChecked(gallery.light, gallery.lightTheme);
 
     wcw::StyleOverride rounded;
     rounded.cornerRadiusDip = gallery.radiusDip;
@@ -227,7 +230,9 @@ bool CreateGallery(Gallery& g) {
     menuButton.items = GalleryMenu();
     g.menuButton = wcw::CreateMenuButton(menuButton);
 
-    g.label = wcw::CreateLabel(Base(g.window, 0, L"Win32 Custom Widgets gallery"));
+    auto heading = Base(g.window, 0, L"Win32 Custom Widgets gallery");
+    heading.appearance.paddingYDip = 2.0f;
+    g.label = wcw::CreateLabel(heading, DT_CENTER);
     g.separator = wcw::CreateSeparator(Base(g.window, 0, L""));
     g.panel = wcw::CreatePanel(Base(g.window, 0, L"Widget gallery and scroll view"));
     auto semanticIcon = Base(g.window, 0, L"", L"Information icon");
@@ -300,6 +305,7 @@ bool CreateGallery(Gallery& g) {
     if (!content) return false;
     auto nested = Base(content, 0, L"Nested controls remain keyboard accessible");
     nested.bounds = {18, 18, 360, 30};
+    nested.appearance.paddingYDip = 3.0f;
     g.nested.emplace_back(wcw::CreateLabel(nested), nested.bounds);
     wcw::ButtonOptions nestedButton{Base(content, 0, L"Nested button")};
     nestedButton.bounds = {18, 62, 180, 36};
@@ -331,7 +337,9 @@ bool CreateGallery(Gallery& g) {
     pageCheck.bounds = {18, 126, 300, 36};
     g.nested.emplace_back(wcw::CreateCheckbox(pageCheck), pageCheck.bounds);
 
-    g.status = wcw::CreateLabel(Base(g.window, 0, L"Ready", L"Notification status"));
+    auto status = Base(g.window, 0, L"Ready", L"Notification status");
+    status.appearance.paddingYDip = 2.0f;
+    g.status = wcw::CreateLabel(status);
     wcw::TooltipOptions tooltip;
     tooltip.text = L"Tooltips are custom drawn and follow the active theme.";
     tooltip.appearance.cornerRadiusDip = 8.0f;
@@ -445,19 +453,23 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     case WM_NOTIFY:
         if (gallery) {
-            const auto header = reinterpret_cast<const NMHDR*>(lParam);
-            if (header->code == wcw::WCN_VALUE_CHANGED) {
-                const auto note = reinterpret_cast<const wcw::ValueChangedNotification*>(lParam);
-                if (header->idFrom == Radius) {
-                    gallery->radiusDip = static_cast<float>(note->value);
+            const auto* value = wcw::DecodeValueChangedNotification(lParam, gallery->radius);
+            if (!value) value = wcw::DecodeValueChangedNotification(lParam, gallery->slider);
+            if (!value) value = wcw::DecodeValueChangedNotification(lParam, gallery->numeric);
+            const auto* check = wcw::DecodeCheckChangedNotification(lParam, gallery->checkbox);
+            if (!check) check = wcw::DecodeCheckChangedNotification(lParam, gallery->toggle);
+            const auto* selection = wcw::DecodeSelectionChangedNotification(lParam, gallery->tabs);
+            if (!selection) selection = wcw::DecodeSelectionChangedNotification(lParam, gallery->combo);
+            if (value) {
+                if (value->header.hwndFrom == gallery->radius) {
+                    gallery->radiusDip = static_cast<float>(value->value);
                     ApplyAppearance(*gallery);
-                } else SetStatus(*gallery, std::format(L"Value changed: {:.2f}", note->value));
-            } else if (header->code == wcw::WCN_CHECK_CHANGED) {
-                const auto note = reinterpret_cast<const wcw::CheckChangedNotification*>(lParam);
-                SetStatus(*gallery, note->checked ? L"Checked" : L"Unchecked");
-            } else if (header->code == wcw::WCN_SELECTION_CHANGED) {
-                const auto note = reinterpret_cast<const wcw::SelectionChangedNotification*>(lParam);
-                if (header->hwndFrom == gallery->tabs) {
+                } else SetStatus(*gallery, std::format(L"Value changed: {:.2f}", value->value));
+            } else if (check) {
+                SetStatus(*gallery, check->checked ? L"Checked" : L"Unchecked");
+            } else if (selection) {
+                if (selection->header.hwndFrom == gallery->tabs) {
+                    const auto* note = selection;
                     const auto hidden = note->newIndex == 0 ? gallery->details : gallery->scroll;
                     if (GetFocus() == hidden || IsChild(hidden, GetFocus())) SetFocus(gallery->tabs);
                     ShowWindow(gallery->scroll, note->newIndex == 0 ? SW_SHOWNA : SW_HIDE);
@@ -465,7 +477,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
                     SetStatus(*gallery, note->newIndex == 0 ? L"Widgets page" : L"Settings page");
                 } else {
                     SetStatus(*gallery, std::format(L"Combo selection {} (item id {})",
-                                                    note->newIndex, note->newId));
+                                                    selection->newIndex, selection->newId));
                 }
             }
         }
