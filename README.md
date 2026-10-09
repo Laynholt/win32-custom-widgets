@@ -286,21 +286,24 @@ overrides and invalidate controls; already-open popup menus are not repainted wi
 
 ## Build and run
 
-Requires Windows 10 or later, MSVC with C++20 support, the Windows SDK, and CMake 3.21 or later.
-Use a fresh build directory when changing the Visual Studio version.
+Requires Windows 10 or later, Microsoft Build Tools 2026 with the C++ tools (MSVC v145), the
+Windows SDK, and CMake 4.2 or later for the Visual Studio 2026 generator. The Visual Studio IDE is
+optional. Verified with MSVC 19.51.36260 and Windows SDK 10.0.26100.0 in Release x64.
+When changing the Visual Studio version, add `--fresh` to the configure command: CMake recreates
+its cache and `CMakeFiles` in the existing `build` directory while preserving other files there.
 
 ```powershell
-cmake -S . -B build -A x64 -DBUILD_TESTING=ON
-cmake --build build --config Debug
-ctest --test-dir build -C Debug --output-on-failure
-.\build\bin\Debug\Win32CustomWidgetsDemo.exe
-```
-
-```powershell
-cmake --build build --config Release
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -T v145 -DBUILD_TESTING=ON -DWCW_BUILD_DEMO=ON
+cmake --build build --config Release --parallel 2
 ctest --test-dir build -C Release --output-on-failure
 .\build\bin\Release\Win32CustomWidgetsDemo.exe
 ```
+
+The static library is `build/Release/Win32CustomWidgets.lib`; the gallery is
+`build/bin/Release/Win32CustomWidgetsDemo.exe`. The library has no standalone runtime process;
+the consuming application's CRT linkage determines its runtime requirements. The gallery and
+test executables built above use `/MD` and require the latest
+[Microsoft Visual C++ Redistributable x64](https://aka.ms/vc14/vc_redist.x64.exe).
 
 Run GUI suites sequentially with the gallery closed. Tests cover painting, control input/state, ranges and parsing,
 menus, accessibility, public API validation, and a separate `add_subdirectory` consumer build.
